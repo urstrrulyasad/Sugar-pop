@@ -1,9 +1,19 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -25,12 +35,12 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoAwesome
@@ -54,43 +64,46 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.game.CandyCell
 import com.example.game.CandyGameEngine
-import com.example.game.CandySpecial
-import com.example.game.CandyType
 import com.example.game.GridPos
+import com.example.ui.components.candyPrimaryColor
+import com.example.ui.components.drawGlossyCandy
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.roundToInt
 import kotlin.math.sin
+import kotlin.random.Random
 
 private val CandyBgTop = Color(0xFF28114E)
 private val CandyBgMid = Color(0xFF3F186E)
@@ -98,6 +111,20 @@ private val CandyBgBottom = Color(0xFF1A0A35)
 private val CandyPinkAccent = Color(0xFFFF5CA8)
 private val CandyGoldAccent = Color(0xFFFFD15C)
 private val CandyCyanAccent = Color(0xFF53E5FF)
+
+private data class PopBurstEffect(
+    val id: Long,
+    val row: Int,
+    val col: Int,
+    val color: Color
+)
+
+private data class FloatingScoreEffect(
+    val id: Long,
+    val row: Float,
+    val col: Float,
+    val points: Int
+)
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -110,12 +137,18 @@ fun CandyGameScreen(
 ) {
     val haptic = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
     var currentLevel by remember(initialLevel) { mutableIntStateOf(initialLevel.coerceAtLeast(1)) }
     val levelConfig = remember(currentLevel) { CandyGameEngine.levelConfig(currentLevel) }
 
     var board by remember { mutableStateOf(CandyGameEngine.createInitialBoard()) }
     var score by remember { mutableIntStateOf(0) }
+    val animatedScore by animateIntAsState(
+        targetValue = score,
+        animationSpec = tween(durationMillis = 360, easing = FastOutSlowInEasing),
+        label = "animatedScore"
+    )
     var movesLeft by remember(levelConfig) { mutableIntStateOf(levelConfig.maxMoves) }
     var hammersLeft by remember(levelConfig) { mutableIntStateOf(3) }
     var isHammerArmed by remember { mutableStateOf(false) }
@@ -127,13 +160,90 @@ fun CandyGameScreen(
     var showRulesDialog by remember { mutableStateOf(false) }
     var showSetupHintBanner by remember(hasPinConfigured) { mutableStateOf(!hasPinConfigured) }
 
+    val popBursts = remember { mutableStateListOf<PopBurstEffect>() }
+    val floatingScores = remember { mutableStateListOf<FloatingScoreEffect>() }
+    var effectSeq by remember { mutableLongStateOf(1L) }
+    val boardShakeX = remember { Animatable(0f) }
+
+    // Ambient shimmer & selection pulse
+    val infiniteTransition = rememberInfiniteTransition(label = "candyAmbient")
+    val shimmerPhase by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmerPhase"
+    )
+    val selectionPulse by infiniteTransition.animateFloat(
+        initialValue = 1.04f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(550, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "selectionPulse"
+    )
+    val ambientDrift by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(9000, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ambientDrift"
+    )
+
     val levelWon = score >= levelConfig.targetScore && !isAnimating
     val levelLost = movesLeft <= 0 && score < levelConfig.targetScore && !isAnimating
 
     LaunchedEffect(comboBanner) {
         if (comboBanner != null) {
-            delay(900L)
+            delay(950L)
             comboBanner = null
+        }
+    }
+
+    fun triggerBoardShake(magnitude: Float = 10f) {
+        scope.launch {
+            for (x in listOf(-magnitude, magnitude, -magnitude * 0.6f, magnitude * 0.6f, 0f)) {
+                boardShakeX.animateTo(x, spring(stiffness = Spring.StiffnessHigh))
+            }
+        }
+    }
+
+    fun spawnPopEffects(
+        currentBoard: List<List<CandyCell>>,
+        cleared: Set<GridPos>,
+        pointsEarned: Int
+    ) {
+        if (cleared.isEmpty()) return
+        val newBursts = cleared.take(24).map { pos ->
+            PopBurstEffect(
+                id = effectSeq++,
+                row = pos.row,
+                col = pos.col,
+                color = candyPrimaryColor(currentBoard[pos.row][pos.col].type)
+            )
+        }
+        popBursts.addAll(newBursts)
+
+        val avgRow = cleared.map { it.row }.average().toFloat()
+        val avgCol = cleared.map { it.col }.average().toFloat()
+        val scoreFx = FloatingScoreEffect(
+            id = effectSeq++,
+            row = avgRow,
+            col = avgCol,
+            points = pointsEarned
+        )
+        floatingScores.add(scoreFx)
+
+        scope.launch {
+            delay(550L)
+            popBursts.removeAll(newBursts.toSet())
+            delay(250L)
+            floatingScores.remove(scoreFx)
         }
     }
 
@@ -147,6 +257,8 @@ fun CandyGameScreen(
         isHammerArmed = false
         selectedPos = null
         clearingCells = emptySet()
+        popBursts.clear()
+        floatingScores.clear()
         isAnimating = false
     }
 
@@ -167,14 +279,16 @@ fun CandyGameScreen(
                 ) ?: break
 
                 clearingCells = step.clearedPositions
+                spawnPopEffects(currentBoard, step.clearedPositions, step.pointsEarned)
                 comboBanner = when {
                     combo == 2 -> "SWEET! ×2"
                     combo == 3 -> "TASTY! ×3"
                     combo >= 4 -> "SUGAR RUSH! ×$combo"
                     else -> null
                 }
+                if (combo >= 3) triggerBoardShake(8f)
                 haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                delay(210L)
+                delay(240L)
 
                 currentBoard = step.nextBoardAfterClearAndDrop
                 board = currentBoard
@@ -182,7 +296,7 @@ fun CandyGameScreen(
                 score += step.pointsEarned
                 onSaveProgress(score, currentLevel)
                 combo++
-                delay(180L)
+                delay(260L)
             }
 
             if (!CandyGameEngine.hasValidMove(currentBoard)) {
@@ -210,18 +324,21 @@ fun CandyGameScreen(
                 movesLeft = (movesLeft - 1).coerceAtLeast(0)
                 val step = CandyGameEngine.resolveColorBombSwap(board, a, b)
                 clearingCells = step.clearedPositions
+                spawnPopEffects(board, step.clearedPositions, step.pointsEarned)
+                triggerBoardShake(14f)
                 comboBanner = "COLOR BLAST!"
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                delay(240L)
+                delay(280L)
                 board = step.nextBoardAfterClearAndDrop
                 clearingCells = emptySet()
+                delay(240L)
                 executeCascadeAfterInitial(step.nextBoardAfterClearAndDrop, step.pointsEarned)
                 return@launch
             }
 
             val swapped = CandyGameEngine.swap(board, a, b)
             board = swapped
-            delay(150L)
+            delay(200L)
 
             val firstMatch = CandyGameEngine.resolveMatches(
                 board = swapped,
@@ -230,18 +347,24 @@ fun CandyGameScreen(
                 comboMultiplier = 1
             )
             if (firstMatch == null) {
-                // Invalid move — bounce back without spending a move
+                // Smooth bounce-back on invalid swap
                 board = CandyGameEngine.swap(swapped, a, b)
+                delay(210L)
                 isAnimating = false
                 return@launch
             }
 
             movesLeft = (movesLeft - 1).coerceAtLeast(0)
             clearingCells = firstMatch.clearedPositions
+            spawnPopEffects(swapped, firstMatch.clearedPositions, firstMatch.pointsEarned)
+            if (firstMatch.spawnedSpecials.isNotEmpty()) {
+                comboBanner = "SPECIAL CANDY!"
+            }
             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            delay(210L)
+            delay(240L)
             board = firstMatch.nextBoardAfterClearAndDrop
             clearingCells = emptySet()
+            delay(250L)
             executeCascadeAfterInitial(firstMatch.nextBoardAfterClearAndDrop, firstMatch.pointsEarned)
         }
     }
@@ -256,11 +379,14 @@ fun CandyGameScreen(
             scope.launch {
                 val step = CandyGameEngine.smashSingleCell(board, pos)
                 clearingCells = step.clearedPositions
+                spawnPopEffects(board, step.clearedPositions, step.pointsEarned)
+                triggerBoardShake(11f)
                 comboBanner = "CRUSHED!"
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                delay(210L)
+                delay(240L)
                 board = step.nextBoardAfterClearAndDrop
                 clearingCells = emptySet()
+                delay(240L)
                 executeCascadeAfterInitial(step.nextBoardAfterClearAndDrop, step.pointsEarned)
             }
             return
@@ -281,24 +407,34 @@ fun CandyGameScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(CandyBgTop, CandyBgMid, CandyBgBottom)
-                )
-            )
+            .background(Brush.verticalGradient(listOf(CandyBgTop, CandyBgMid, CandyBgBottom)))
             .systemBarsPadding()
     ) {
-        // Subtle floating bokeh accents for playful candy atmosphere
+        // Drifting glowing bokeh background
         Canvas(modifier = Modifier.fillMaxSize()) {
             drawCircle(
-                color = CandyPinkAccent.copy(alpha = 0.08f),
-                radius = size.width * 0.35f,
-                center = Offset(size.width * 0.15f, size.height * 0.14f)
+                color = CandyPinkAccent.copy(alpha = 0.10f),
+                radius = size.width * 0.36f,
+                center = Offset(
+                    size.width * (0.14f + 0.08f * ambientDrift),
+                    size.height * (0.14f + 0.05f * ambientDrift)
+                )
             )
             drawCircle(
-                color = CandyCyanAccent.copy(alpha = 0.07f),
-                radius = size.width * 0.28f,
-                center = Offset(size.width * 0.88f, size.height * 0.78f)
+                color = CandyCyanAccent.copy(alpha = 0.09f),
+                radius = size.width * 0.30f,
+                center = Offset(
+                    size.width * (0.86f - 0.08f * ambientDrift),
+                    size.height * (0.78f - 0.06f * ambientDrift)
+                )
+            )
+            drawCircle(
+                color = CandyGoldAccent.copy(alpha = 0.06f),
+                radius = size.width * 0.22f,
+                center = Offset(
+                    size.width * (0.50f + 0.1f * sin(ambientDrift * PI).toFloat()),
+                    size.height * 0.45f
+                )
             )
         }
 
@@ -382,7 +518,7 @@ fun CandyGameScreen(
                 }
             }
 
-            // First-launch-only Vault Setup Notice (disappears completely once PIN is configured)
+            // First-launch-only Vault Setup Notice
             AnimatedVisibility(visible = showSetupHintBanner && !hasPinConfigured) {
                 Surface(
                     onClick = onOpenSecretVault,
@@ -421,7 +557,7 @@ fun CandyGameScreen(
                 }
             }
 
-            // Level, Score, Target Progress & Moves HUD
+            // Level, Animated Score, Star Progress & Moves HUD
             Surface(
                 color = Color.White.copy(alpha = 0.11f),
                 shape = RoundedCornerShape(22.dp),
@@ -445,7 +581,7 @@ fun CandyGameScreen(
                                 color = CandyGoldAccent
                             )
                             Text(
-                                text = "$score / ${levelConfig.targetScore}",
+                                text = "$animatedScore / ${levelConfig.targetScore}",
                                 style = MaterialTheme.typography.headlineMedium,
                                 color = Color.White
                             )
@@ -465,14 +601,19 @@ fun CandyGameScreen(
                         }
                     }
 
-                    val progress = (score.toFloat() / levelConfig.targetScore.coerceAtLeast(1))
+                    val progressTarget = (score.toFloat() / levelConfig.targetScore.coerceAtLeast(1))
                         .coerceIn(0f, 1f)
+                    val animatedProgress by animateFloatAsState(
+                        targetValue = progressTarget,
+                        animationSpec = tween(350),
+                        label = "progressFill"
+                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         LinearProgressIndicator(
-                            progress = { progress },
+                            progress = { animatedProgress },
                             color = CandyGoldAccent,
                             trackColor = Color.White.copy(alpha = 0.16f),
                             modifier = Modifier
@@ -482,28 +623,39 @@ fun CandyGameScreen(
                         )
                         repeat(3) { starIdx ->
                             val threshold = (starIdx + 1) / 3f
-                            val earned = progress >= threshold
+                            val earned = progressTarget >= threshold
+                            val starScale by animateFloatAsState(
+                                targetValue = if (earned) 1.2f else 1f,
+                                animationSpec = spring(
+                                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                                    stiffness = Spring.StiffnessMedium
+                                ),
+                                label = "starScale_$starIdx"
+                            )
                             Icon(
                                 imageVector = Icons.Rounded.Star,
                                 contentDescription = null,
                                 tint = if (earned) CandyGoldAccent else Color.White.copy(alpha = 0.24f),
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .scale(starScale)
                             )
                         }
                     }
                 }
             }
 
-            // 8x8 Interactive Match-3 Candy Board
+            // 4-Layer Animated 8x8 Match-3 Board
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(1f),
+                    .aspectRatio(1f)
+                    .offset { IntOffset(boardShakeX.value.roundToInt(), 0) },
                 contentAlignment = Alignment.Center
             ) {
                 Surface(
                     shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF1A0C36).copy(alpha = 0.88f),
+                    color = Color(0xFF1A0C36).copy(alpha = 0.90f),
                     tonalElevation = 6.dp,
                     modifier = Modifier
                         .fillMaxSize()
@@ -511,8 +663,8 @@ fun CandyGameScreen(
                             2.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    Color.White.copy(alpha = 0.32f),
-                                    CandyPinkAccent.copy(alpha = 0.35f)
+                                    Color.White.copy(alpha = 0.34f),
+                                    CandyPinkAccent.copy(alpha = 0.38f)
                                 )
                             ),
                             RoundedCornerShape(24.dp)
@@ -522,31 +674,195 @@ fun CandyGameScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(8.dp)
+                            .clip(RoundedCornerShape(16.dp))
                     ) {
-                        val cellSize = maxWidth / CandyGameEngine.BOARD_SIZE
+                        val cellSizeDp = maxWidth / CandyGameEngine.BOARD_SIZE
+                        val cellPx = with(density) { cellSizeDp.toPx() }
 
+                        // Layer 1: Static Checkerboard Slots
                         Column(modifier = Modifier.fillMaxSize()) {
                             for (r in 0 until CandyGameEngine.BOARD_SIZE) {
                                 Row(modifier = Modifier.weight(1f)) {
                                     for (c in 0 until CandyGameEngine.BOARD_SIZE) {
                                         val pos = GridPos(r, c)
-                                        val cell = board[r][c]
                                         val isSelected = selectedPos == pos
-                                        val isClearing = pos in clearingCells
                                         val isCheckerDark = (r + c) % 2 == 0
-
-                                        CandyTileCell(
-                                            cell = cell,
-                                            isSelected = isSelected,
-                                            isClearing = isClearing,
-                                            isHammerArmed = isHammerArmed,
-                                            isCheckerDark = isCheckerDark,
-                                            onTap = { handleCellTap(pos) },
-                                            onSwipe = { dr, dc ->
-                                                handleSwap(pos, GridPos(pos.row + dr, pos.col + dc))
-                                            },
+                                        Box(
                                             modifier = Modifier
-                                                .size(cellSize)
+                                                .size(cellSizeDp)
+                                                .padding(2.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(
+                                                    when {
+                                                        isSelected -> CandyGoldAccent.copy(alpha = 0.32f)
+                                                        isCheckerDark -> Color.White.copy(alpha = 0.08f)
+                                                        else -> Color.White.copy(alpha = 0.03f)
+                                                    }
+                                                )
+                                                .then(
+                                                    if (isSelected) {
+                                                        Modifier.border(
+                                                            1.8.dp,
+                                                            CandyGoldAccent,
+                                                            RoundedCornerShape(10.dp)
+                                                        )
+                                                    } else if (isHammerArmed) {
+                                                        Modifier.border(
+                                                            1.dp,
+                                                            CandyGoldAccent.copy(alpha = 0.25f),
+                                                            RoundedCornerShape(10.dp)
+                                                        )
+                                                    } else {
+                                                        Modifier
+                                                    }
+                                                )
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Layer 2: Keyed Animated Candy Sprites (slides on swap, bounces on drop)
+                        val positionedCells = remember(board) {
+                            board.flatMapIndexed { r, rowList ->
+                                rowList.mapIndexed { c, cell -> Triple(cell, r, c) }
+                            }
+                        }
+
+                        positionedCells.forEach { (cell, r, c) ->
+                            key(cell.id) {
+                                val pos = GridPos(r, c)
+                                val isSelected = selectedPos == pos
+                                val isClearing = pos in clearingCells
+
+                                val targetOffset = Offset(c * cellPx, r * cellPx)
+                                val offsetAnim = remember {
+                                    Animatable(
+                                        Offset(c * cellPx, ((r - 2).coerceAtLeast(-2)) * cellPx),
+                                        Offset.VectorConverter
+                                    )
+                                }
+
+                                LaunchedEffect(r, c, cellPx) {
+                                    offsetAnim.animateTo(
+                                        targetValue = targetOffset,
+                                        animationSpec = spring(
+                                            dampingRatio = 0.68f,
+                                            stiffness = 380f
+                                        )
+                                    )
+                                }
+
+                                val scale by animateFloatAsState(
+                                    targetValue = when {
+                                        isClearing -> 0.1f
+                                        isSelected -> selectionPulse
+                                        else -> 1f
+                                    },
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    ),
+                                    label = "candyScale"
+                                )
+                                val alpha by animateFloatAsState(
+                                    targetValue = if (isClearing) 0f else 1f,
+                                    animationSpec = tween(190),
+                                    label = "candyAlpha"
+                                )
+
+                                Box(
+                                    modifier = Modifier
+                                        .offset {
+                                            IntOffset(
+                                                offsetAnim.value.x.roundToInt(),
+                                                offsetAnim.value.y.roundToInt()
+                                            )
+                                        }
+                                        .size(cellSizeDp)
+                                        .alpha(alpha),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Canvas(
+                                        modifier = Modifier
+                                            .fillMaxSize(0.80f)
+                                            .scale(scale)
+                                    ) {
+                                        drawGlossyCandy(cell, shimmerPhase)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Layer 3: Sparkle Pop Particles & Floating Score Popups
+                        popBursts.forEach { burst ->
+                            key(burst.id) {
+                                CandyBurstOverlay(
+                                    burst = burst,
+                                    cellSizePx = cellPx
+                                )
+                            }
+                        }
+                        floatingScores.forEach { fx ->
+                            key(fx.id) {
+                                FloatingScoreBadge(
+                                    effect = fx,
+                                    cellSizePx = cellPx
+                                )
+                            }
+                        }
+
+                        // Layer 4: Static Hit-Grid for Crisp Tap & Swipe Gestures
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            for (r in 0 until CandyGameEngine.BOARD_SIZE) {
+                                Row(modifier = Modifier.weight(1f)) {
+                                    for (c in 0 until CandyGameEngine.BOARD_SIZE) {
+                                        val pos = GridPos(r, c)
+                                        Box(
+                                            modifier = Modifier
+                                                .size(cellSizeDp)
+                                                .pointerInput(pos) {
+                                                    detectTapGestures(onTap = { handleCellTap(pos) })
+                                                }
+                                                .pointerInput(pos) {
+                                                    var totalX = 0f
+                                                    var totalY = 0f
+                                                    var triggered = false
+                                                    detectDragGestures(
+                                                        onDragStart = {
+                                                            totalX = 0f
+                                                            totalY = 0f
+                                                            triggered = false
+                                                        },
+                                                        onDrag = { change, dragAmount ->
+                                                            change.consume()
+                                                            if (triggered) return@detectDragGestures
+                                                            totalX += dragAmount.x
+                                                            totalY += dragAmount.y
+                                                            val threshold = 22f
+                                                            if (abs(totalX) > threshold || abs(totalY) > threshold) {
+                                                                triggered = true
+                                                                if (abs(totalX) > abs(totalY)) {
+                                                                    handleSwap(
+                                                                        pos,
+                                                                        GridPos(
+                                                                            pos.row,
+                                                                            pos.col + if (totalX > 0) 1 else -1
+                                                                        )
+                                                                    )
+                                                                } else {
+                                                                    handleSwap(
+                                                                        pos,
+                                                                        GridPos(
+                                                                            pos.row + if (totalY > 0) 1 else -1,
+                                                                            pos.col
+                                                                        )
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                    )
+                                                }
                                                 .testTag("candy_cell_${r}_${c}")
                                         )
                                     }
@@ -559,13 +875,18 @@ fun CandyGameScreen(
                 // Floating Combo Banner
                 this@Column.AnimatedVisibility(
                     visible = comboBanner != null,
-                    enter = scaleIn(spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
+                    enter = scaleIn(
+                        spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMediumLow
+                        )
+                    ) + fadeIn(),
                     exit = scaleOut() + fadeOut()
                 ) {
                     Surface(
                         color = CandyGoldAccent,
                         shape = RoundedCornerShape(50),
-                        shadowElevation = 8.dp
+                        shadowElevation = 10.dp
                     ) {
                         Text(
                             text = comboBanner.orEmpty(),
@@ -593,11 +914,7 @@ fun CandyGameScreen(
                         }
                     },
                     shape = RoundedCornerShape(16.dp),
-                    color = if (isHammerArmed) {
-                        CandyGoldAccent
-                    } else {
-                        Color.White.copy(alpha = 0.13f)
-                    },
+                    color = if (isHammerArmed) CandyGoldAccent else Color.White.copy(alpha = 0.13f),
                     modifier = Modifier
                         .weight(1f)
                         .height(50.dp)
@@ -740,6 +1057,84 @@ fun CandyGameScreen(
 }
 
 @Composable
+private fun CandyBurstOverlay(
+    burst: PopBurstEffect,
+    cellSizePx: Float
+) {
+    val progress = remember { Animatable(0f) }
+    val particleAngles = remember {
+        List(7) { idx -> (idx * 51.4f + Random.nextFloat() * 18f) * (PI / 180.0) }
+    }
+
+    LaunchedEffect(burst.id) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing)
+        )
+    }
+
+    val p = progress.value
+    val alpha = (1f - p).coerceIn(0f, 1f)
+    val cx = (burst.col + 0.5f) * cellSizePx
+    val cy = (burst.row + 0.5f) * cellSizePx
+
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        // Expanding candy shockwave ring
+        drawCircle(
+            color = burst.color.copy(alpha = alpha * 0.7f),
+            radius = cellSizePx * (0.28f + 0.68f * p),
+            center = Offset(cx, cy),
+            style = Stroke(width = (1f - p * 0.7f) * 5f)
+        )
+        // Radial sugar sparkles
+        particleAngles.forEachIndexed { idx, angle ->
+            val dist = cellSizePx * (0.18f + 0.85f * p)
+            val px = cx + (dist * cos(angle)).toFloat()
+            val py = cy + (dist * sin(angle)).toFloat()
+            val dotColor = if (idx % 2 == 0) burst.color else Color.White
+            drawCircle(
+                color = dotColor.copy(alpha = alpha),
+                radius = cellSizePx * 0.11f * (1f - p * 0.55f),
+                center = Offset(px, py)
+            )
+        }
+    }
+}
+
+@Composable
+private fun FloatingScoreBadge(
+    effect: FloatingScoreEffect,
+    cellSizePx: Float
+) {
+    val progress = remember { Animatable(0f) }
+
+    LaunchedEffect(effect.id) {
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 720, easing = FastOutSlowInEasing)
+        )
+    }
+
+    val p = progress.value
+    val xPx = (effect.col * cellSizePx).roundToInt()
+    val yPx = ((effect.row * cellSizePx) - (p * cellSizePx * 1.1f)).roundToInt()
+    val alpha = if (p < 0.7f) 1f else ((1f - p) / 0.3f).coerceIn(0f, 1f)
+
+    Box(
+        modifier = Modifier
+            .offset { IntOffset(xPx, yPx) }
+            .alpha(alpha)
+    ) {
+        Text(
+            text = "+${effect.points}",
+            style = MaterialTheme.typography.titleMedium,
+            color = CandyGoldAccent,
+            fontWeight = FontWeight.ExtraBold
+        )
+    }
+}
+
+@Composable
 private fun HudMetricBadge(
     label: String,
     value: String,
@@ -766,256 +1161,5 @@ private fun HudMetricBadge(
                 fontWeight = FontWeight.Bold
             )
         }
-    }
-}
-
-@Composable
-private fun CandyTileCell(
-    cell: CandyCell,
-    isSelected: Boolean,
-    isClearing: Boolean,
-    isHammerArmed: Boolean,
-    isCheckerDark: Boolean,
-    onTap: () -> Unit,
-    onSwipe: (dr: Int, dc: Int) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val scale by animateFloatAsState(
-        targetValue = when {
-            isClearing -> 0.15f
-            isSelected -> 1.12f
-            else -> 1f
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "candyScale"
-    )
-
-    Box(
-        modifier = modifier
-            .padding(2.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                when {
-                    isSelected -> CandyGoldAccent.copy(alpha = 0.30f)
-                    isCheckerDark -> Color.White.copy(alpha = 0.08f)
-                    else -> Color.White.copy(alpha = 0.03f)
-                }
-            )
-            .then(
-                if (isSelected) {
-                    Modifier.border(1.5.dp, CandyGoldAccent, RoundedCornerShape(10.dp))
-                } else if (isHammerArmed) {
-                    Modifier.border(
-                        1.dp,
-                        CandyGoldAccent.copy(alpha = 0.25f),
-                        RoundedCornerShape(10.dp)
-                    )
-                } else {
-                    Modifier
-                }
-            )
-            .pointerInput(cell.id) {
-                detectTapGestures(onTap = { onTap() })
-            }
-            .pointerInput(cell.id) {
-                var totalX = 0f
-                var totalY = 0f
-                var triggered = false
-                detectDragGestures(
-                    onDragStart = {
-                        totalX = 0f
-                        totalY = 0f
-                        triggered = false
-                    },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        if (triggered) return@detectDragGestures
-                        totalX += dragAmount.x
-                        totalY += dragAmount.y
-                        val threshold = 24f
-                        if (abs(totalX) > threshold || abs(totalY) > threshold) {
-                            triggered = true
-                            if (abs(totalX) > abs(totalY)) {
-                                onSwipe(0, if (totalX > 0) 1 else -1)
-                            } else {
-                                onSwipe(if (totalY > 0) 1 else -1, 0)
-                            }
-                        }
-                    }
-                )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize(0.82f)
-                .scale(scale)
-        ) {
-            drawGlossyCandy(cell)
-        }
-    }
-}
-
-private fun DrawScope.drawGlossyCandy(cell: CandyCell) {
-    val w = size.width
-    val h = size.height
-    val cx = w / 2f
-    val cy = h / 2f
-    val r = minOf(w, h) * 0.45f
-
-    if (cell.special == CandySpecial.COLOR_BOMB) {
-        // Chocolate Sprinkle Bomb
-        drawCircle(
-            brush = Brush.radialGradient(
-                listOf(Color(0xFF6B3E2E), Color(0xFF2B130B)),
-                center = Offset(cx - r * 0.25f, cy - r * 0.25f)
-            ),
-            radius = r
-        )
-        val sprinkleColors = listOf(
-            Color(0xFFFF4D6D),
-            Color(0xFFFFD166),
-            Color(0xFF06D6A0),
-            Color(0xFF4CC9F0),
-            Color(0xFFC77DFF),
-            Color.White
-        )
-        for (i in 0 until 6) {
-            val angle = (i * 60f) * (PI / 180.0)
-            val sx = cx + (r * 0.52f * cos(angle)).toFloat()
-            val sy = cy + (r * 0.52f * sin(angle)).toFloat()
-            drawCircle(color = sprinkleColors[i], radius = r * 0.16f, center = Offset(sx, sy))
-        }
-        drawCircle(color = Color.White.copy(alpha = 0.9f), radius = r * 0.22f)
-        return
-    }
-
-    val (lightColor, darkColor) = when (cell.type) {
-        CandyType.STRAWBERRY -> Color(0xFFFF6B8B) to Color(0xFFC9184A)
-        CandyType.LEMON -> Color(0xFFFFE066) to Color(0xFFF59F00)
-        CandyType.MINT -> Color(0xFF5EEAD4) to Color(0xFF0F766E)
-        CandyType.BLUEBERRY -> Color(0xFF60A5FA) to Color(0xFF1D4ED8)
-        CandyType.GRAPE -> Color(0xFFD8B4FE) to Color(0xFF7E22CE)
-        CandyType.TANGERINE -> Color(0xFFFF9F68) to Color(0xFFEA580C)
-    }
-
-    val brush = Brush.radialGradient(
-        colors = listOf(lightColor, darkColor),
-        center = Offset(cx - r * 0.3f, cy - r * 0.3f),
-        radius = r * 1.4f
-    )
-
-    when (cell.type) {
-        CandyType.STRAWBERRY -> {
-            // Glossy Heart/Berry
-            val path = Path().apply {
-                moveTo(cx, cy + r * 0.85f)
-                cubicTo(cx - r * 1.15f, cy + r * 0.1f, cx - r * 0.95f, cy - r * 0.95f, cx, cy - r * 0.32f)
-                cubicTo(cx + r * 0.95f, cy - r * 0.95f, cx + r * 1.15f, cy + r * 0.1f, cx, cy + r * 0.85f)
-                close()
-            }
-            drawPath(path, brush = brush)
-        }
-        CandyType.LEMON -> {
-            // 5-Point Star
-            val path = Path()
-            val outer = r * 1.02f
-            val inner = r * 0.46f
-            for (i in 0 until 10) {
-                val rad = if (i % 2 == 0) outer else inner
-                val angle = (-90.0 + i * 36.0) * (PI / 180.0)
-                val x = cx + (rad * cos(angle)).toFloat()
-                val y = cy + (rad * sin(angle)).toFloat()
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            path.close()
-            drawPath(path, brush = brush)
-        }
-        CandyType.MINT -> {
-            // Rounded Hexagon Gem
-            val path = Path()
-            for (i in 0 until 6) {
-                val angle = (-90.0 + i * 60.0) * (PI / 180.0)
-                val x = cx + (r * 0.95f * cos(angle)).toFloat()
-                val y = cy + (r * 0.95f * sin(angle)).toFloat()
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            path.close()
-            drawPath(path, brush = brush)
-        }
-        CandyType.BLUEBERRY -> {
-            // Faceted Diamond
-            val path = Path().apply {
-                moveTo(cx, cy - r)
-                lineTo(cx + r * 0.9f, cy)
-                lineTo(cx, cy + r)
-                lineTo(cx - r * 0.9f, cy)
-                close()
-            }
-            drawPath(path, brush = brush)
-        }
-        CandyType.GRAPE -> {
-            // Glossy Orb
-            drawCircle(brush = brush, radius = r * 0.92f, center = Offset(cx, cy))
-            drawCircle(
-                color = Color.White.copy(alpha = 0.25f),
-                radius = r * 0.56f,
-                center = Offset(cx, cy),
-                style = Stroke(width = r * 0.14f)
-            )
-        }
-        CandyType.TANGERINE -> {
-            // Cushion Square Candy
-            drawRoundRect(
-                brush = brush,
-                topLeft = Offset(cx - r * 0.85f, cy - r * 0.85f),
-                size = Size(r * 1.7f, r * 1.7f),
-                cornerRadius = CornerRadius(r * 0.48f, r * 0.48f)
-            )
-        }
-    }
-
-    // Specular Candy Gloss Highlight
-    drawCircle(
-        color = Color.White.copy(alpha = 0.52f),
-        radius = r * 0.22f,
-        center = Offset(cx - r * 0.28f, cy - r * 0.30f)
-    )
-
-    // Striped Special Frosting Bands
-    when (cell.special) {
-        CandySpecial.STRIPED_H -> {
-            drawLine(
-                color = Color.White.copy(alpha = 0.88f),
-                start = Offset(cx - r * 0.72f, cy - r * 0.18f),
-                end = Offset(cx + r * 0.72f, cy - r * 0.18f),
-                strokeWidth = r * 0.15f,
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = Color.White.copy(alpha = 0.88f),
-                start = Offset(cx - r * 0.72f, cy + r * 0.18f),
-                end = Offset(cx + r * 0.72f, cy + r * 0.18f),
-                strokeWidth = r * 0.15f,
-                cap = StrokeCap.Round
-            )
-        }
-        CandySpecial.STRIPED_V -> {
-            drawLine(
-                color = Color.White.copy(alpha = 0.88f),
-                start = Offset(cx - r * 0.18f, cy - r * 0.72f),
-                end = Offset(cx - r * 0.18f, cy + r * 0.72f),
-                strokeWidth = r * 0.15f,
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = Color.White.copy(alpha = 0.88f),
-                start = Offset(cx + r * 0.18f, cy - r * 0.72f),
-                end = Offset(cx + r * 0.18f, cy + r * 0.72f),
-                strokeWidth = r * 0.15f,
-                cap = StrokeCap.Round
-            )
-        }
-        else -> Unit
     }
 }
