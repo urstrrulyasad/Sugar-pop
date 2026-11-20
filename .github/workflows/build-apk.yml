@@ -68,11 +68,39 @@ jobs:
           -Dkotlin.compiler.execution.strategy=daemon
           "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true"
 
+      - name: Prepare Debug APK file
+        run: |
+          APK_FILE=$(ls app/build/outputs/apk/debug/*.apk | head -n 1)
+          cp "$APK_FILE" sugar-pop-debug.apk
+          ls -lh sugar-pop-debug.apk
+
+      - name: Publish Debug APK to GitHub Releases
+        if: ${{ github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" sugar-pop-debug.apk --clobber
+            else
+              gh release create "$TAG" sugar-pop-debug.apk \
+                --title "Sugar Pop $TAG" \
+                --generate-notes
+            fi
+          else
+            gh release delete latest --yes --cleanup-tag || true
+            gh release create latest sugar-pop-debug.apk \
+              --target "$GITHUB_SHA" \
+              --title "Sugar Pop Latest APK" \
+              --notes "Automated debug APK build from commit ${GITHUB_SHA::7} (run #${GITHUB_RUN_NUMBER})."
+          fi
+
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v6
         with:
           name: sugar-pop-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: sugar-pop-debug.apk
           if-no-files-found: error
 
   build-signed-release:
@@ -132,22 +160,36 @@ jobs:
           -Dkotlin.compiler.execution.strategy=daemon
           "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8 -Djava.awt.headless=true"
 
+      - name: Prepare Release APK file
+        if: steps.check_secrets.outputs.configured == 'true'
+        run: |
+          APK_FILE=$(ls app/build/outputs/apk/release/*.apk | head -n 1)
+          cp "$APK_FILE" sugar-pop-release.apk
+          ls -lh sugar-pop-release.apk
+
+      - name: Attach Release APK to GitHub Releases
+        if: steps.check_secrets.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="latest"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" sugar-pop-release.apk --clobber
+          else
+            gh release create "$TAG" sugar-pop-release.apk \
+              --target "$GITHUB_SHA" \
+              --title "Sugar Pop $TAG" \
+              --generate-notes
+          fi
+
       - name: Upload Release APK Artifact
         if: steps.check_secrets.outputs.configured == 'true'
         uses: actions/upload-artifact@v6
         with:
           name: sugar-pop-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: sugar-pop-release.apk
           if-no-files-found: error
-
-      - name: Attach Release APK to GitHub Release on Tag
-        if: startsWith(github.ref, 'refs/tags/v') && steps.check_secrets.outputs.configured == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" app/build/outputs/apk/release/*.apk --clobber
-          else
-            gh release create "$TAG" app/build/outputs/apk/release/*.apk --title "$TAG" --generate-notes
-          fi
