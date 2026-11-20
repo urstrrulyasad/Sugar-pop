@@ -81,6 +81,14 @@ secrets {
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
+// No KSP processors are configured for unitTest or androidTest; skip those empty KSP tasks
+// so KSP2 does not initialize/dispose ApplicationManager multiple times in the same worker JVM.
+tasks.matching {
+  it.name.startsWith("ksp") && (it.name.contains("UnitTest") || it.name.contains("AndroidTest"))
+}.configureEach {
+  enabled = false
+}
+
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
