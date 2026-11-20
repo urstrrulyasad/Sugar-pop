@@ -64,10 +64,10 @@ import com.example.ui.components.HideMediaSourceSheet
 import com.example.ui.navigation.VaultRoute
 import com.example.ui.screens.AlbumDetailScreen
 import com.example.ui.screens.AlbumsScreen
-import com.example.ui.screens.CandyGameScreen
 import com.example.ui.screens.PhotoViewerScreen
 import com.example.ui.screens.PinLockScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.SugarArcadeScreen
 import com.example.ui.screens.VaultHomeScreen
 import com.example.ui.screens.VideoPlayerScreen
 import com.example.ui.theme.KeepsakeVaultTheme
@@ -135,6 +135,22 @@ fun KeepsakeVaultApp(
         viewModel.onSystemDeleteOriginalsResult(result.resultCode == Activity.RESULT_OK)
     }
 
+    val exportBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportVaultBackup(uri)
+        }
+    }
+
+    val restoreBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.restoreVaultBackup(uri)
+        }
+    }
+
     LaunchedEffect(Unit) {
         viewModel.events.collect { event ->
             when (event) {
@@ -199,11 +215,11 @@ fun KeepsakeVaultApp(
         ) { state ->
             when (state) {
                 0 -> {
-                    CandyGameScreen(
-                        initialLevel = uiState.securitySettings.candyLevel,
-                        highScore = uiState.securitySettings.candyHighScore,
-                        hasPinConfigured = uiState.securitySettings.hasPinConfigured,
-                        onSaveProgress = viewModel::saveCandyProgress,
+                    SugarArcadeScreen(
+                        securitySettings = uiState.securitySettings,
+                        onSaveCandyProgress = viewModel::saveCandyProgress,
+                        onSavePlatformerProgress = viewModel::savePlatformerProgress,
+                        onSelectGameMode = viewModel::setSelectedGameMode,
                         onOpenSecretVault = viewModel::openSecretVault
                     )
                 }
@@ -227,7 +243,11 @@ fun KeepsakeVaultApp(
                             onDigit = viewModel::onPinDigit,
                             onBackspace = viewModel::onPinBackspace,
                             onClear = viewModel::onPinClear,
-                            onCancelChangePin = viewModel::cancelChangePin
+                            onCancelChangePin = viewModel::cancelChangePin,
+                            onRestoreBackup = {
+                                viewModel.suppressNextAutoLock = true
+                                restoreBackupLauncher.launch(arrayOf("application/zip", "*/*"))
+                            }
                         )
                     }
                 }
@@ -450,6 +470,14 @@ fun KeepsakeVaultApp(
                                         onPromptDeleteOriginalChanged = viewModel::setPromptDeleteOriginal,
                                         onThemeModeChanged = viewModel::setThemeMode,
                                         onDefaultSpeedChanged = viewModel::setDefaultPlaybackSpeed,
+                                        onExportBackup = {
+                                            viewModel.suppressNextAutoLock = true
+                                            exportBackupLauncher.launch("sugar-pop-vault-backup.zip")
+                                        },
+                                        onRestoreBackup = {
+                                            viewModel.suppressNextAutoLock = true
+                                            restoreBackupLauncher.launch(arrayOf("application/zip", "*/*"))
+                                        },
                                         onWipeVault = viewModel::wipeEntireVault
                                     )
                                 }

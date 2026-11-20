@@ -65,4 +65,13 @@ interface VaultDao {
 
     @Query("DELETE FROM vault_albums")
     suspend fun deleteAllAlbums()
+
+    @Query("SELECT * FROM vault_media ORDER BY addedAtMs DESC")
+    suspend fun getAllMediaSnapshot(): List<VaultMediaEntity>
+
+    @Query("SELECT * FROM vault_albums ORDER BY createdAtMs DESC")
+    suspend fun getAllAlbumsSnapshot(): List<VaultAlbumEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAlbumsBatch(albums: List<VaultAlbumEntity>)
 }

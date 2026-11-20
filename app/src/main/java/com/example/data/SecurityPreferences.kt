@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.ui.theme.ThemeMode
@@ -19,6 +20,11 @@ private val Context.securityDataStore: DataStore<Preferences> by preferencesData
     name = "vault_security_prefs"
 )
 
+enum class ArcadeGameMode(val label: String) {
+    PLATFORMER("2.5D Run"),
+    MATCH3("Match-3")
+}
+
 data class VaultSecuritySettings(
     val hasPinConfigured: Boolean = false,
     val autoLockOnBackground: Boolean = true,
@@ -27,7 +33,25 @@ data class VaultSecuritySettings(
     val themeMode: ThemeMode = ThemeMode.DARK,
     val defaultPlaybackSpeed: Float = 1.0f,
     val candyHighScore: Int = 0,
-    val candyLevel: Int = 1
+    val candyLevel: Int = 1,
+    val platformerHighScore: Int = 0,
+    val platformerLevel: Int = 1,
+    val selectedGameMode: ArcadeGameMode = ArcadeGameMode.PLATFORMER
+)
+
+data class SecurityBackupSnapshot(
+    val pinHash: String?,
+    val pinSalt: String?,
+    val autoLockOnBackground: Boolean,
+    val screenShieldEnabled: Boolean,
+    val promptDeleteOriginal: Boolean,
+    val themeMode: String,
+    val defaultPlaybackSpeed: Float,
+    val candyHighScore: Int,
+    val candyLevel: Int,
+    val platformerHighScore: Int,
+    val platformerLevel: Int,
+    val selectedGameMode: String
 )
 
 class SecurityPreferences(private val context: Context) {
@@ -40,12 +64,16 @@ class SecurityPreferences(private val context: Context) {
         val PROMPT_DELETE_ORIGINAL = booleanPreferencesKey("prompt_delete_original")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val DEFAULT_SPEED = floatPreferencesKey("default_playback_speed")
-        val CANDY_HIGH_SCORE = androidx.datastore.preferences.core.intPreferencesKey("candy_high_score")
-        val CANDY_LEVEL = androidx.datastore.preferences.core.intPreferencesKey("candy_level")
+        val CANDY_HIGH_SCORE = intPreferencesKey("candy_high_score")
+        val CANDY_LEVEL = intPreferencesKey("candy_level")
+        val PLATFORMER_HIGH_SCORE = intPreferencesKey("platformer_high_score")
+        val PLATFORMER_LEVEL = intPreferencesKey("platformer_level")
+        val SELECTED_GAME_MODE = stringPreferencesKey("selected_game_mode")
     }
 
     val settingsFlow: Flow<VaultSecuritySettings> = context.securityDataStore.data.map { prefs ->
         val themeStr = prefs[Keys.THEME_MODE] ?: ThemeMode.DARK.name
+        val modeStr = prefs[Keys.SELECTED_GAME_MODE] ?: ArcadeGameMode.PLATFORMER.name
         VaultSecuritySettings(
             hasPinConfigured = !prefs[Keys.PIN_HASH].isNullOrBlank(),
             autoLockOnBackground = prefs[Keys.AUTO_LOCK] ?: true,
@@ -54,7 +82,11 @@ class SecurityPreferences(private val context: Context) {
             themeMode = runCatching { ThemeMode.valueOf(themeStr) }.getOrDefault(ThemeMode.DARK),
             defaultPlaybackSpeed = prefs[Keys.DEFAULT_SPEED] ?: 1.0f,
             candyHighScore = prefs[Keys.CANDY_HIGH_SCORE] ?: 0,
-            candyLevel = prefs[Keys.CANDY_LEVEL] ?: 1
+            candyLevel = prefs[Keys.CANDY_LEVEL] ?: 1,
+            platformerHighScore = prefs[Keys.PLATFORMER_HIGH_SCORE] ?: 0,
+            platformerLevel = prefs[Keys.PLATFORMER_LEVEL] ?: 1,
+            selectedGameMode = runCatching { ArcadeGameMode.valueOf(modeStr) }
+                .getOrDefault(ArcadeGameMode.PLATFORMER)
         )
     }
 
@@ -64,7 +96,60 @@ class SecurityPreferences(private val context: Context) {
             if (score > prevHigh) {
                 prefs[Keys.CANDY_HIGH_SCORE] = score
             }
-            prefs[Keys.CANDY_LEVEL] = level.coerceAtLeast(1)
+            val prevLevel = prefs[Keys.CANDY_LEVEL] ?: 1
+            prefs[Keys.CANDY_LEVEL] = maxOf(prevLevel, level).coerceAtLeast(1)
+        }
+    }
+
+    suspend fun savePlatformerProgress(score: Int, level: Int) {
+        context.securityDataStore.edit { prefs ->
+            val prevHigh = prefs[Keys.PLATFORMER_HIGH_SCORE] ?: 0
+            if (score > prevHigh) {
+                prefs[Keys.PLATFORMER_HIGH_SCORE] = score
+            }
+            val prevLevel = prefs[Keys.PLATFORMER_LEVEL] ?: 1
+            prefs[Keys.PLATFORMER_LEVEL] = maxOf(prevLevel, level).coerceAtLeast(1)
+        }
+    }
+
+    suspend fun setSelectedGameMode(mode: ArcadeGameMode) {
+        context.securityDataStore.edit { it[Keys.SELECTED_GAME_MODE] = mode.name }
+    }
+
+    suspend fun exportBackupSnapshot(): SecurityBackupSnapshot {
+        val prefs = context.securityDataStore.data.first()
+        return SecurityBackupSnapshot(
+            pinHash = prefs[Keys.PIN_HASH],
+            pinSalt = prefs[Keys.PIN_SALT],
+            autoLockOnBackground = prefs[Keys.AUTO_LOCK] ?: true,
+            screenShieldEnabled = prefs[Keys.SCREEN_SHIELD] ?: true,
+            promptDeleteOriginal = prefs[Keys.PROMPT_DELETE_ORIGINAL] ?: true,
+            themeMode = prefs[Keys.THEME_MODE] ?: ThemeMode.DARK.name,
+            defaultPlaybackSpeed = prefs[Keys.DEFAULT_SPEED] ?: 1.0f,
+            candyHighScore = prefs[Keys.CANDY_HIGH_SCORE] ?: 0,
+            candyLevel = prefs[Keys.CANDY_LEVEL] ?: 1,
+            platformerHighScore = prefs[Keys.PLATFORMER_HIGH_SCORE] ?: 0,
+            platformerLevel = prefs[Keys.PLATFORMER_LEVEL] ?: 1,
+            selectedGameMode = prefs[Keys.SELECTED_GAME_MODE] ?: ArcadeGameMode.PLATFORMER.name
+        )
+    }
+
+    suspend fun restoreBackupSnapshot(snapshot: SecurityBackupSnapshot) {
+        context.securityDataStore.edit { prefs ->
+            if (!snapshot.pinHash.isNullOrBlank() && !snapshot.pinSalt.isNullOrBlank()) {
+                prefs[Keys.PIN_HASH] = snapshot.pinHash
+                prefs[Keys.PIN_SALT] = snapshot.pinSalt
+            }
+            prefs[Keys.AUTO_LOCK] = snapshot.autoLockOnBackground
+            prefs[Keys.SCREEN_SHIELD] = snapshot.screenShieldEnabled
+            prefs[Keys.PROMPT_DELETE_ORIGINAL] = snapshot.promptDeleteOriginal
+            prefs[Keys.THEME_MODE] = snapshot.themeMode
+            prefs[Keys.DEFAULT_SPEED] = snapshot.defaultPlaybackSpeed
+            prefs[Keys.CANDY_HIGH_SCORE] = maxOf(prefs[Keys.CANDY_HIGH_SCORE] ?: 0, snapshot.candyHighScore)
+            prefs[Keys.CANDY_LEVEL] = maxOf(prefs[Keys.CANDY_LEVEL] ?: 1, snapshot.candyLevel)
+            prefs[Keys.PLATFORMER_HIGH_SCORE] = maxOf(prefs[Keys.PLATFORMER_HIGH_SCORE] ?: 0, snapshot.platformerHighScore)
+            prefs[Keys.PLATFORMER_LEVEL] = maxOf(prefs[Keys.PLATFORMER_LEVEL] ?: 1, snapshot.platformerLevel)
+            prefs[Keys.SELECTED_GAME_MODE] = snapshot.selectedGameMode
         }
     }
 

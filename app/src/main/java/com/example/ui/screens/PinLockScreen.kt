@@ -27,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -64,7 +65,8 @@ fun PinLockScreen(
     onDigit: (String) -> Unit,
     onBackspace: () -> Unit,
     onClear: () -> Unit,
-    onCancelChangePin: () -> Unit
+    onCancelChangePin: () -> Unit,
+    onRestoreBackup: () -> Unit = {}
 ) {
     val haptic = LocalHapticFeedback.current
     val shakeOffset = remember { Animatable(0f) }
@@ -302,6 +304,19 @@ fun PinLockScreen(
                         modifier = Modifier.testTag("cancel_change_pin_btn")
                     ) {
                         Text("Cancel PIN Change")
+                    }
+                } else if (lockStatus == LockStatus.SETUP_PIN) {
+                    TextButton(
+                        onClick = onRestoreBackup,
+                        modifier = Modifier.testTag("pin_restore_backup_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Restore,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.size(6.dp))
+                        Text("Restore Previous Vault Backup")
                     }
                 } else {
                     Surface(

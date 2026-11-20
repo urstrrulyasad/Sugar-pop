@@ -4,9 +4,11 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.ArcadeGameMode
 import com.example.data.MediaType
 import com.example.data.SecurityPreferences
 import com.example.data.VaultAlbumEntity
+import com.example.data.VaultBackupManager
 import com.example.data.VaultDatabase
 import com.example.data.VaultMediaEntity
 import com.example.data.VaultRepository
@@ -84,6 +86,12 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     private val database = VaultDatabase.getInstance(application)
     private val storage = VaultStorageManager(application)
     private val securityPreferences = SecurityPreferences(application)
+    private val backupManager = VaultBackupManager(
+        application,
+        database.vaultDao(),
+        storage,
+        securityPreferences
+    )
     val repository = VaultRepository(database.vaultDao(), storage, securityPreferences)
 
     private val _isVaultOverlayOpen = MutableStateFlow(false)
@@ -254,6 +262,57 @@ class VaultViewModel(application: Application) : AndroidViewModel(application) {
     fun saveCandyProgress(score: Int, level: Int) {
         viewModelScope.launch {
             securityPreferences.saveCandyProgress(score, level)
+        }
+    }
+
+    fun savePlatformerProgress(score: Int, level: Int) {
+        viewModelScope.launch {
+            securityPreferences.savePlatformerProgress(score, level)
+        }
+    }
+
+    fun setSelectedGameMode(mode: ArcadeGameMode) {
+        viewModelScope.launch {
+            securityPreferences.setSelectedGameMode(mode)
+        }
+    }
+
+    fun exportVaultBackup(targetUri: Uri) {
+        viewModelScope.launch {
+            _isImporting.value = true
+            val result = backupManager.exportToUri(targetUri)
+            _isImporting.value = false
+            if (result.success) {
+                _events.emit(
+                    VaultEvent.ShowMessage(
+                        "Backup saved (${result.mediaCount} media, ${result.albumCount} albums)"
+                    )
+                )
+            } else {
+                _events.emit(VaultEvent.ShowMessage("Could not export vault backup."))
+            }
+        }
+    }
+
+    fun restoreVaultBackup(sourceUri: Uri) {
+        viewModelScope.launch {
+            _isImporting.value = true
+            val result = backupManager.restoreFromUri(sourceUri)
+            _isImporting.value = false
+            if (result.success) {
+                if (result.restoredPin && _lockStatus.value != LockStatus.UNLOCKED) {
+                    _pinEntry.value = ""
+                    _pinError.value = null
+                    _lockStatus.value = LockStatus.LOCKED
+                }
+                _events.emit(
+                    VaultEvent.ShowMessage(
+                        "Restored ${result.mediaCount} media & ${result.albumCount} albums!"
+                    )
+                )
+            } else {
+                _events.emit(VaultEvent.ShowMessage("Invalid or unreadable backup archive."))
+            }
         }
     }
 

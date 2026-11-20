@@ -6,10 +6,10 @@ import kotlin.random.Random
 enum class CandyType {
     STRAWBERRY,
     LEMON,
-    MINT,
     BLUEBERRY,
     GRAPE,
-    TANGERINE
+    MINT,
+    ORANGE
 }
 
 enum class CandySpecial {
@@ -19,53 +19,54 @@ enum class CandySpecial {
     COLOR_BOMB
 }
 
+data class GridPos(val row: Int, val col: Int)
+
 data class CandyCell(
     val id: Long,
     val type: CandyType,
     val special: CandySpecial = CandySpecial.NONE
 )
 
-data class GridPos(val row: Int, val col: Int)
-
 data class CandyLevelConfig(
     val level: Int,
-    val name: String,
+    val worldName: String,
     val targetScore: Int,
     val maxMoves: Int
 )
 
 data class MatchResolutionStep(
     val clearedPositions: Set<GridPos>,
-    val spawnedSpecials: Map<GridPos, CandyCell>,
     val pointsEarned: Int,
+    val spawnedSpecials: Map<GridPos, CandyCell>,
     val nextBoardAfterClearAndDrop: List<List<CandyCell>>
 )
 
 object CandyGameEngine {
     const val BOARD_SIZE = 8
-    private var nextIdCounter = 1L
+    private var idSeq = 1L
 
-    private fun nextId(): Long = nextIdCounter++
+    private fun nextId(): Long = idSeq++
+
+    private val worldNames = listOf(
+        "Sugar Meadow",
+        "Lemonade Lagoon",
+        "Berry Kingdom",
+        "Mint Glacier",
+        "Tangerine Canyon",
+        "Caramel Citadel",
+        "Starlight Galaxy"
+    )
 
     fun levelConfig(level: Int): CandyLevelConfig {
         val safeLevel = level.coerceAtLeast(1)
-        val names = listOf(
-            "Sugar Meadow",
-            "Caramel Falls",
-            "Berry Citadel",
-            "Mint Glacier",
-            "Starlight Bakery",
-            "Tangerine Grove",
-            "Velvet Kingdom"
-        )
-        val name = names[(safeLevel - 1) % names.size]
-        val targetScore = 900 + (safeLevel - 1) * 750
-        val moves = (20 + ((safeLevel - 1) % 3) * 2).coerceAtMost(26)
+        val worldName = worldNames[(safeLevel - 1) % worldNames.size]
+        val targetScore = 1000 + (safeLevel - 1) * 750
+        val maxMoves = (20 + (safeLevel % 5)).coerceIn(18, 25)
         return CandyLevelConfig(
             level = safeLevel,
-            name = name,
+            worldName = worldName,
             targetScore = targetScore,
-            maxMoves = moves
+            maxMoves = maxMoves
         )
     }
 
@@ -76,15 +77,14 @@ object CandyGameEngine {
                 CandyCell(nextId(), types[Random.nextInt(types.size)])
             }
         }
-        // Eliminate initial 3-in-a-row matches
         for (r in 0 until BOARD_SIZE) {
             for (c in 0 until BOARD_SIZE) {
-                var candidate = grid[r][c].type
+                var candidate = types[Random.nextInt(types.size)]
                 while (
                     (c >= 2 && grid[r][c - 1].type == candidate && grid[r][c - 2].type == candidate) ||
                     (r >= 2 && grid[r - 1][c].type == candidate && grid[r - 2][c].type == candidate)
                 ) {
-                    candidate = types[Random.nextInt(types.size)]
+                    candidate = types[(candidate.ordinal + 1) % types.size]
                 }
                 grid[r][c] = CandyCell(nextId(), candidate)
             }
@@ -99,9 +99,9 @@ object CandyGameEngine {
 
     fun swap(board: List<List<CandyCell>>, a: GridPos, b: GridPos): List<List<CandyCell>> {
         val mutable = board.map { it.toMutableList() }
-        val temp = mutable[a.row][a.col]
+        val tmp = mutable[a.row][a.col]
         mutable[a.row][a.col] = mutable[b.row][b.col]
-        mutable[b.row][b.col] = temp
+        mutable[b.row][b.col] = tmp
         return mutable.map { it.toList() }
     }
 
@@ -117,12 +117,11 @@ object CandyGameEngine {
     ): MatchResolutionStep {
         val cellA = board[a.row][a.col]
         val cellB = board[b.row][b.col]
-        val toClear = mutableSetOf(a, b)
-
+        val cleared = mutableSetOf(a, b)
         if (cellA.special == CandySpecial.COLOR_BOMB && cellB.special == CandySpecial.COLOR_BOMB) {
             for (r in 0 until BOARD_SIZE) {
                 for (c in 0 until BOARD_SIZE) {
-                    toClear += GridPos(r, c)
+                    cleared += GridPos(r, c)
                 }
             }
         } else {
@@ -130,19 +129,18 @@ object CandyGameEngine {
             for (r in 0 until BOARD_SIZE) {
                 for (c in 0 until BOARD_SIZE) {
                     if (board[r][c].type == targetType) {
-                        toClear += GridPos(r, c)
+                        cleared += GridPos(r, c)
                     }
                 }
             }
         }
-
-        val expanded = expandSpecials(board, toClear)
-        val dropped = applyGravityAndRefill(board, expanded, emptyMap())
+        val expanded = expandSpecialClears(board, cleared)
+        val nextBoard = clearAndDrop(board, expanded, emptyMap())
         return MatchResolutionStep(
             clearedPositions = expanded,
+            pointsEarned = expanded.size * 90,
             spawnedSpecials = emptyMap(),
-            pointsEarned = expanded.size * 45,
-            nextBoardAfterClearAndDrop = dropped
+            nextBoardAfterClearAndDrop = nextBoard
         )
     }
 
@@ -155,22 +153,22 @@ object CandyGameEngine {
         val runs = findMatchRuns(board)
         if (runs.isEmpty()) return null
 
-        val allMatched = mutableSetOf<GridPos>()
+        val matchedCells = mutableSetOf<GridPos>()
         val spawnedSpecials = mutableMapOf<GridPos, CandyCell>()
 
         for (run in runs) {
-            allMatched.addAll(run.positions)
+            matchedCells += run.positions
             if (run.positions.size >= 5) {
-                val pivot = run.positions.firstOrNull { it == preferredPivotA || it == preferredPivotB }
-                    ?: run.positions[run.positions.size / 2]
+                val pivot = listOfNotNull(preferredPivotA, preferredPivotB)
+                    .firstOrNull { it in run.positions } ?: run.positions[run.positions.size / 2]
                 spawnedSpecials[pivot] = CandyCell(
                     id = nextId(),
                     type = run.type,
                     special = CandySpecial.COLOR_BOMB
                 )
             } else if (run.positions.size == 4) {
-                val pivot = run.positions.firstOrNull { it == preferredPivotA || it == preferredPivotB }
-                    ?: run.positions[1]
+                val pivot = listOfNotNull(preferredPivotA, preferredPivotB)
+                    .firstOrNull { it in run.positions } ?: run.positions[1]
                 val special = if (run.isHorizontal) CandySpecial.STRIPED_V else CandySpecial.STRIPED_H
                 spawnedSpecials[pivot] = CandyCell(
                     id = nextId(),
@@ -180,27 +178,27 @@ object CandyGameEngine {
             }
         }
 
-        // Don't destroy a newly spawned special in the same tick
-        val clearPositions = expandSpecials(board, allMatched) - spawnedSpecials.keys
-        val dropped = applyGravityAndRefill(board, clearPositions, spawnedSpecials)
-        val points = (clearPositions.size * 30 + spawnedSpecials.size * 60) * comboMultiplier
+        val finalCleared = expandSpecialClears(board, matchedCells)
+        val effectiveCleared = finalCleared - spawnedSpecials.keys
+        val points = (effectiveCleared.size * 60 + spawnedSpecials.size * 120) * comboMultiplier
+        val nextBoard = clearAndDrop(board, finalCleared, spawnedSpecials)
 
         return MatchResolutionStep(
-            clearedPositions = clearPositions,
-            spawnedSpecials = spawnedSpecials,
+            clearedPositions = finalCleared,
             pointsEarned = points,
-            nextBoardAfterClearAndDrop = dropped
+            spawnedSpecials = spawnedSpecials,
+            nextBoardAfterClearAndDrop = nextBoard
         )
     }
 
     fun smashSingleCell(board: List<List<CandyCell>>, target: GridPos): MatchResolutionStep {
-        val expanded = expandSpecials(board, setOf(target))
-        val dropped = applyGravityAndRefill(board, expanded, emptyMap())
+        val expanded = expandSpecialClears(board, setOf(target))
+        val nextBoard = clearAndDrop(board, expanded, emptyMap())
         return MatchResolutionStep(
             clearedPositions = expanded,
+            pointsEarned = expanded.size * 80,
             spawnedSpecials = emptyMap(),
-            pointsEarned = expanded.size * 35,
-            nextBoardAfterClearAndDrop = dropped
+            nextBoardAfterClearAndDrop = nextBoard
         )
     }
 
@@ -222,15 +220,29 @@ object CandyGameEngine {
     }
 
     fun shuffleBoard(board: List<List<CandyCell>>): List<List<CandyCell>> {
-        val flat = board.flatten().toMutableList()
-        repeat(8) {
-            flat.shuffle()
-            val candidate = flat.chunked(BOARD_SIZE)
+        val types = CandyType.entries
+        repeat(15) {
+            val flat = board.flatten().shuffled().toMutableList()
+            val candidate = List(BOARD_SIZE) { r ->
+                List(BOARD_SIZE) { c ->
+                    flat[r * BOARD_SIZE + c]
+                }
+            }
             if (findMatchRuns(candidate).isEmpty() && hasValidMove(candidate)) {
                 return candidate
             }
         }
-        return createInitialBoard()
+        val fallback = MutableList(BOARD_SIZE) { r ->
+            MutableList(BOARD_SIZE) { c ->
+                CandyCell(nextId(), types[(r * 2 + c) % types.size])
+            }
+        }
+        // Guarantee a valid move at (0,0)-(0,1) swap
+        fallback[0][0] = CandyCell(nextId(), CandyType.STRAWBERRY)
+        fallback[0][1] = CandyCell(nextId(), CandyType.BLUEBERRY)
+        fallback[0][2] = CandyCell(nextId(), CandyType.STRAWBERRY)
+        fallback[0][3] = CandyCell(nextId(), CandyType.STRAWBERRY)
+        return fallback.map { it.toList() }
     }
 
     private data class MatchRun(
@@ -241,78 +253,64 @@ object CandyGameEngine {
 
     private fun findMatchRuns(board: List<List<CandyCell>>): List<MatchRun> {
         val runs = mutableListOf<MatchRun>()
-
-        // Horizontal runs
         for (r in 0 until BOARD_SIZE) {
             var c = 0
             while (c < BOARD_SIZE) {
-                val startType = board[r][c].type
-                val positions = mutableListOf(GridPos(r, c))
-                var nc = c + 1
-                while (nc < BOARD_SIZE && board[r][nc].type == startType) {
-                    positions += GridPos(r, nc)
-                    nc++
+                val type = board[r][c].type
+                var end = c + 1
+                while (end < BOARD_SIZE && board[r][end].type == type) end++
+                if (end - c >= 3) {
+                    runs += MatchRun(type, (c until end).map { GridPos(r, it) }, isHorizontal = true)
                 }
-                if (positions.size >= 3) {
-                    runs += MatchRun(startType, positions, isHorizontal = true)
-                }
-                c = nc
+                c = end
             }
         }
-
-        // Vertical runs
         for (c in 0 until BOARD_SIZE) {
             var r = 0
             while (r < BOARD_SIZE) {
-                val startType = board[r][c].type
-                val positions = mutableListOf(GridPos(r, c))
-                var nr = r + 1
-                while (nr < BOARD_SIZE && board[nr][c].type == startType) {
-                    positions += GridPos(nr, c)
-                    nr++
+                val type = board[r][c].type
+                var end = r + 1
+                while (end < BOARD_SIZE && board[end][c].type == type) end++
+                if (end - r >= 3) {
+                    runs += MatchRun(type, (r until end).map { GridPos(it, c) }, isHorizontal = false)
                 }
-                if (positions.size >= 3) {
-                    runs += MatchRun(startType, positions, isHorizontal = false)
-                }
-                r = nr
+                r = end
             }
         }
-
         return runs
     }
 
-    private fun expandSpecials(
+    private fun expandSpecialClears(
         board: List<List<CandyCell>>,
         initial: Set<GridPos>
     ): Set<GridPos> {
-        val result = initial.toMutableSet()
+        val cleared = initial.toMutableSet()
         val queue = ArrayDeque(initial)
         val processed = mutableSetOf<GridPos>()
 
         while (queue.isNotEmpty()) {
             val pos = queue.removeFirst()
             if (!processed.add(pos)) continue
-            val cell = board[pos.row][pos.col]
-            when (cell.special) {
+            when (board[pos.row][pos.col].special) {
                 CandySpecial.STRIPED_H -> {
-                    for (c in 0 until BOARD_SIZE) {
-                        val p = GridPos(pos.row, c)
-                        if (result.add(p)) queue.addLast(p)
+                    for (col in 0 until BOARD_SIZE) {
+                        val next = GridPos(pos.row, col)
+                        if (cleared.add(next)) queue.add(next)
                     }
                 }
                 CandySpecial.STRIPED_V -> {
-                    for (r in 0 until BOARD_SIZE) {
-                        val p = GridPos(r, pos.col)
-                        if (result.add(p)) queue.addLast(p)
+                    for (row in 0 until BOARD_SIZE) {
+                        val next = GridPos(row, pos.col)
+                        if (cleared.add(next)) queue.add(next)
                     }
                 }
                 CandySpecial.COLOR_BOMB -> {
-                    val targetType = cell.type
+                    val targetType = board[pos.row][pos.col].type
                     for (r in 0 until BOARD_SIZE) {
                         for (c in 0 until BOARD_SIZE) {
                             if (board[r][c].type == targetType) {
-                                val p = GridPos(r, c)
-                                if (result.add(p)) queue.addLast(p)
+                                val next = GridPos(r, c)
+                                if (cleared.add(next)) queue.add(next)
                             }
                         }
                     }
@@ -320,41 +318,37 @@ object CandyGameEngine {
                 CandySpecial.NONE -> Unit
             }
         }
-        return result
+        return cleared
     }
 
-    private fun applyGravityAndRefill(
+    private fun clearAndDrop(
         board: List<List<CandyCell>>,
         cleared: Set<GridPos>,
         spawnedSpecials: Map<GridPos, CandyCell>
     ): List<List<CandyCell>> {
-        val mutable = MutableList(BOARD_SIZE) { r ->
-            MutableList(BOARD_SIZE) { c -> board[r][c] }
-        }
-        // Apply spawned specials before gravity
-        for ((pos, specialCell) in spawnedSpecials) {
-            mutable[pos.row][pos.col] = specialCell
-        }
-
         val types = CandyType.entries
+        val newGrid = Array(BOARD_SIZE) { Array<CandyCell?>(BOARD_SIZE) { null } }
+
         for (c in 0 until BOARD_SIZE) {
             val surviving = mutableListOf<CandyCell>()
-            for (r in (BOARD_SIZE - 1) downTo 0) {
+            for (r in BOARD_SIZE - 1 downTo 0) {
                 val pos = GridPos(r, c)
-                if (pos !in cleared) {
-                    surviving += mutable[r][c]
+                if (pos in spawnedSpecials) {
+                    surviving += spawnedSpecials[pos]!!
+                } else if (pos !in cleared) {
+                    surviving += board[r][c]
                 }
             }
-            val missingCount = BOARD_SIZE - surviving.size
-            val columnCells = mutableListOf<CandyCell>()
-            repeat(missingCount) {
-                columnCells += CandyCell(nextId(), types[Random.nextInt(types.size)])
+            var writeRow = BOARD_SIZE - 1
+            for (cell in surviving) {
+                newGrid[writeRow][c] = cell
+                writeRow--
             }
-            columnCells.addAll(surviving.reversed())
-            for (r in 0 until BOARD_SIZE) {
-                mutable[r][c] = columnCells[r]
+            while (writeRow >= 0) {
+                newGrid[writeRow][c] = CandyCell(nextId(), types[Random.nextInt(types.size)])
+                writeRow--
             }
         }
-        return mutable.map { it.toList() }
+        return newGrid.map { row -> row.map { it!! } }
     }
 }

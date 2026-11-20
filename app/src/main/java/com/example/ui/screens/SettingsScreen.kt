@@ -17,10 +17,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoDelete
+import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.LockReset
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.ScreenshotMonitor
 import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Speed
@@ -68,6 +70,8 @@ fun SettingsScreen(
     onPromptDeleteOriginalChanged: (Boolean) -> Unit,
     onThemeModeChanged: (ThemeMode) -> Unit,
     onDefaultSpeedChanged: (Float) -> Unit,
+    onExportBackup: () -> Unit,
+    onRestoreBackup: () -> Unit,
     onWipeVault: () -> Unit
 ) {
     var showWipeConfirm by remember { mutableStateOf(false) }
@@ -251,6 +255,32 @@ fun SettingsScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // Backup & Reinstall Recovery
+            SectionHeader("Backup & Reinstall Recovery")
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column {
+                    SettingActionRow(
+                        icon = Icons.Rounded.Backup,
+                        title = "Export Vault Backup",
+                        subtitle = "Save photos, videos, albums, PIN & game progress as a portable archive",
+                        testTag = "export_backup_row",
+                        onClick = onExportBackup
+                    )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    SettingActionRow(
+                        icon = Icons.Rounded.Restore,
+                        title = "Restore Vault Backup",
+                        subtitle = "Recover all hidden media, albums, PIN & scores after a reinstall",
+                        testTag = "restore_backup_row",
+                        onClick = onRestoreBackup
+                    )
                 }
             }
 

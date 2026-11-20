@@ -39,6 +39,10 @@ class VaultStorageManager(private val context: Context) {
         }
     }
 
+    fun vaultFileForId(id: String): File = File(mediaDir, "$id.vault")
+
+    fun thumbFileForId(id: String): File = File(thumbsDir, "$id.jpg")
+
     suspend fun importFromUri(uri: Uri, albumId: String?): VaultMediaEntity? =
         withContext(Dispatchers.IO) {
             val resolver = context.contentResolver
