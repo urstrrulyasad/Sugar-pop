@@ -1,0 +1,6 @@
+{
+  "name": "Sugar Pop",
+  "description": "Colorful Match-3 candy puzzle game with a hidden private photo & video vault and built-in advanced Media3 video player.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

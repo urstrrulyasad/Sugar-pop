@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">Sugar Pop</string>
+    <string name="vault_subtitle">Private Encrypted Media</string>
+    <string name="pin_create_title">Create Vault PIN</string>
+    <string name="pin_create_subtitle">Choose a 4-digit PIN to shield your hidden photos &amp; videos</string>
+    <string name="pin_confirm_title">Confirm Your PIN</string>
+    <string name="pin_confirm_subtitle">Re-enter your 4-digit PIN to lock your vault</string>
+    <string name="pin_unlock_title">Unlock Keepsake Vault</string>
+    <string name="pin_unlock_subtitle">Enter your 4-digit PIN to access hidden media</string>
+    <string name="pin_mismatch_error">PINs did not match. Please try again.</string>
+    <string name="pin_wrong_error">Incorrect PIN. Try again.</string>
+    <string name="hide_media_cta">Hide Photos &amp; Videos</string>
+    <string name="hide_from_files_cta">Import from Files</string>
+    <string name="empty_vault_title">Your Private Vault Is Empty</string>
+    <string name="empty_vault_body">Hide photos and videos from your public gallery into private internal storage, complete with an advanced Media3 player.</string>
+    <string name="albums_title">Private Albums</string>
+    <string name="settings_title">Vault Security</string>
+    <string name="tab_vault">Vault</string>
+    <string name="tab_albums">Albums</string>
+    <string name="tab_settings">Security</string>
+</resources>
