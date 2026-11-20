@@ -11,19 +11,22 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Backspace
 import androidx.compose.material.icons.rounded.Lock
@@ -49,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -95,7 +99,7 @@ fun PinLockScreen(
         else -> stringResource(R.string.pin_unlock_subtitle)
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(
@@ -110,22 +114,34 @@ fun PinLockScreen(
             .systemBarsPadding(),
         contentAlignment = Alignment.Center
     ) {
+        val isCompactHeight = maxHeight < 640.dp
+        val keySize = if (isCompactHeight) 60.dp else 72.dp
+        val keyRowSpacing = if (isCompactHeight) 10.dp else 14.dp
+        val keyColSpacing = if (isCompactHeight) 18.dp else 24.dp
+        val emblemSize = if (isCompactHeight) 56.dp else 72.dp
+        val scrollState = rememberScrollState()
+
         Column(
             modifier = Modifier
                 .widthIn(max = 420.dp)
                 .fillMaxSize()
-                .padding(horizontal = 28.dp, vertical = 20.dp),
+                .verticalScroll(scrollState)
+                .heightIn(min = maxHeight)
+                .padding(
+                    horizontal = 24.dp,
+                    vertical = if (isCompactHeight) 10.dp else 20.dp
+                ),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             // Top Header & Vault Shield Emblem
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(top = 12.dp)
+                modifier = Modifier.padding(top = if (isCompactHeight) 4.dp else 12.dp)
             ) {
                 Box(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(emblemSize)
                         .clip(CircleShape)
                         .background(
                             Brush.radialGradient(
@@ -150,17 +166,21 @@ fun PinLockScreen(
                         },
                         contentDescription = "Keepsake Vault Shield",
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(34.dp)
+                        modifier = Modifier.size(if (isCompactHeight) 28.dp else 34.dp)
                     )
                 }
 
-                Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(if (isCompactHeight) 12.dp else 20.dp))
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.headlineMedium,
+                    style = if (isCompactHeight) {
+                        MaterialTheme.typography.titleLarge
+                    } else {
+                        MaterialTheme.typography.headlineMedium
+                    },
                     textAlign = TextAlign.Center
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
@@ -168,7 +188,7 @@ fun PinLockScreen(
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(if (isCompactHeight) 16.dp else 28.dp))
 
                 // Animated 4-dot PIN indicator
                 Row(
@@ -203,7 +223,7 @@ fun PinLockScreen(
                     }
                 }
 
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(10.dp))
                 Box(modifier = Modifier.height(22.dp), contentAlignment = Alignment.Center) {
                     if (pinError != null) {
                         Text(
@@ -219,9 +239,9 @@ fun PinLockScreen(
 
             // Keypad
             Column(
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(keyRowSpacing),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(bottom = 12.dp)
+                modifier = Modifier.padding(bottom = if (isCompactHeight) 6.dp else 12.dp)
             ) {
                 val rows = listOf(
                     listOf("1", "2", "3"),
@@ -230,12 +250,14 @@ fun PinLockScreen(
                 )
                 for (row in rows) {
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(keyColSpacing),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         for (digit in row) {
                             PinDigitKey(
                                 label = digit,
+                                keySize = keySize,
+                                compact = isCompactHeight,
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     onDigit(digit)
@@ -245,13 +267,13 @@ fun PinLockScreen(
                     }
                 }
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(keyColSpacing),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Clear key
                     Box(
                         modifier = Modifier
-                            .size(72.dp)
+                            .size(keySize)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -270,6 +292,8 @@ fun PinLockScreen(
 
                     PinDigitKey(
                         label = "0",
+                        keySize = keySize,
+                        compact = isCompactHeight,
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onDigit("0")
@@ -279,7 +303,7 @@ fun PinLockScreen(
                     // Backspace key
                     Box(
                         modifier = Modifier
-                            .size(72.dp)
+                            .size(keySize)
                             .clip(CircleShape)
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
@@ -339,6 +363,8 @@ fun PinLockScreen(
 @Composable
 private fun PinDigitKey(
     label: String,
+    keySize: Dp,
+    compact: Boolean,
     onClick: () -> Unit
 ) {
     Surface(
@@ -347,7 +373,7 @@ private fun PinDigitKey(
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         tonalElevation = 2.dp,
         modifier = Modifier
-            .size(72.dp)
+            .size(keySize)
             .border(
                 1.dp,
                 MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
@@ -359,7 +385,7 @@ private fun PinDigitKey(
             Text(
                 text = label,
                 fontFamily = MaterialTheme.typography.labelMedium.fontFamily,
-                fontSize = 26.sp,
+                fontSize = if (compact) 22.sp else 26.sp,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onSurface
             )

@@ -31,7 +31,8 @@ data class CandyLevelConfig(
     val level: Int,
     val worldName: String,
     val targetScore: Int,
-    val maxMoves: Int
+    val maxMoves: Int,
+    val isHardLevel: Boolean = false
 )
 
 data class MatchResolutionStep(
@@ -60,13 +61,24 @@ object CandyGameEngine {
     fun levelConfig(level: Int): CandyLevelConfig {
         val safeLevel = level.coerceAtLeast(1)
         val worldName = worldNames[(safeLevel - 1) % worldNames.size]
-        val targetScore = 1000 + (safeLevel - 1) * 750
-        val maxMoves = (20 + (safeLevel % 5)).coerceIn(18, 25)
+        val isHardLevel = safeLevel % 5 == 0
+        val baseTarget = 1000 + (safeLevel - 1) * 750
+        val targetScore = if (isHardLevel) {
+            ((baseTarget * 1.35f).toInt() / 50) * 50
+        } else {
+            baseTarget
+        }
+        val maxMoves = if (isHardLevel) {
+            (17 - (safeLevel / 15)).coerceIn(14, 17)
+        } else {
+            (20 + (safeLevel % 5)).coerceIn(19, 25)
+        }
         return CandyLevelConfig(
             level = safeLevel,
             worldName = worldName,
             targetScore = targetScore,
-            maxMoves = maxMoves
+            maxMoves = maxMoves,
+            isHardLevel = isHardLevel
         )
     }
 
@@ -203,16 +215,43 @@ object CandyGameEngine {
     }
 
     fun hasValidMove(board: List<List<CandyCell>>): Boolean {
+        val grid = Array(BOARD_SIZE) { r -> Array(BOARD_SIZE) { c -> board[r][c].type } }
+        fun hasMatchAt(r: Int, c: Int): Boolean {
+            val t = grid[r][c]
+            var h = 1
+            var i = c - 1
+            while (i >= 0 && grid[r][i] == t) { h++; i-- }
+            i = c + 1
+            while (i < BOARD_SIZE && grid[r][i] == t) { h++; i++ }
+            if (h >= 3) return true
+
+            var v = 1
+            var j = r - 1
+            while (j >= 0 && grid[j][c] == t) { v++; j-- }
+            j = r + 1
+            while (j < BOARD_SIZE && grid[j][c] == t) { v++; j++ }
+            return v >= 3
+        }
         for (r in 0 until BOARD_SIZE) {
             for (c in 0 until BOARD_SIZE) {
                 if (board[r][c].special == CandySpecial.COLOR_BOMB) return true
-                if (c + 1 < BOARD_SIZE) {
-                    val swapped = swap(board, GridPos(r, c), GridPos(r, c + 1))
-                    if (findMatchRuns(swapped).isNotEmpty()) return true
+                if (c + 1 < BOARD_SIZE && grid[r][c] != grid[r][c + 1]) {
+                    val tmp = grid[r][c]
+                    grid[r][c] = grid[r][c + 1]
+                    grid[r][c + 1] = tmp
+                    val match = hasMatchAt(r, c) || hasMatchAt(r, c + 1)
+                    grid[r][c + 1] = grid[r][c]
+                    grid[r][c] = tmp
+                    if (match) return true
                 }
-                if (r + 1 < BOARD_SIZE) {
-                    val swapped = swap(board, GridPos(r, c), GridPos(r + 1, c))
-                    if (findMatchRuns(swapped).isNotEmpty()) return true
+                if (r + 1 < BOARD_SIZE && grid[r][c] != grid[r + 1][c]) {
+                    val tmp = grid[r][c]
+                    grid[r][c] = grid[r + 1][c]
+                    grid[r + 1][c] = tmp
+                    val match = hasMatchAt(r, c) || hasMatchAt(r + 1, c)
+                    grid[r + 1][c] = grid[r][c]
+                    grid[r][c] = tmp
+                    if (match) return true
                 }
             }
         }

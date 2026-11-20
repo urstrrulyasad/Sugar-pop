@@ -14,6 +14,7 @@ import com.example.util.formatDuration
 import com.example.util.formatFileSize
 import com.example.util.formatResolution
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -131,5 +132,24 @@ class ExampleUnitTest {
         assertEquals(CandyGameEngine.BOARD_SIZE, board.size)
         assertNull(CandyGameEngine.resolveMatches(board))
         assertTrue(CandyGameEngine.hasValidMove(board))
+    }
+
+    @Test
+    fun hardLevels_triggerEveryFifthLevelInBothGames() {
+        for (lvl in 1..15) {
+            val candyCfg = CandyGameEngine.levelConfig(lvl)
+            val platformer = PlatformerLevels.createWorldState(lvl)
+            val expectHard = lvl % 5 == 0
+            assertEquals("Candy level $lvl hard flag", expectHard, candyCfg.isHardLevel)
+            assertEquals("Platformer level $lvl hard flag", expectHard, platformer.isHardLevel)
+            if (expectHard) {
+                assertTrue("Hard candy level $lvl should tighten moves", candyCfg.maxMoves <= 17)
+                assertEquals("Hard platformer level $lvl should start with 2 lives", 2, platformer.player.lives)
+            } else {
+                assertFalse(candyCfg.isHardLevel)
+                assertTrue("Normal candy level $lvl should have >= 19 moves", candyCfg.maxMoves >= 19)
+                assertEquals("Normal platformer level $lvl should start with 3 lives", 3, platformer.player.lives)
+            }
+        }
     }
 }

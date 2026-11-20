@@ -43,32 +43,38 @@ object PlatformerEngine {
         val worldTime = state.worldTime + dt
         var timeLeft = (state.timeLeftSec - dt).coerceAtLeast(0f)
 
-        val tiles = state.tiles.toMutableMap()
-        val particles = state.particles.toMutableList()
-        val popups = state.popups.toMutableList()
-        val powerUps = state.powerUps.toMutableList()
+        var mutableTiles: MutableMap<Long, WorldTile>? = null
+        fun activeTiles(): Map<Long, WorldTile> = mutableTiles ?: state.tiles
+        fun editTiles(): MutableMap<Long, WorldTile> =
+            mutableTiles ?: state.tiles.toMutableMap().also { mutableTiles = it }
+
+        val particles = if (state.particles.isEmpty()) ArrayList(8) else state.particles.toMutableList()
+        val popups = if (state.popups.isEmpty()) ArrayList(4) else state.popups.toMutableList()
+        val powerUps = if (state.powerUps.isEmpty()) ArrayList(2) else state.powerUps.toMutableList()
         var player = state.player
         var checkpoint = state.checkpoint
         var respawnX = state.respawnX
         var respawnY = state.respawnY
 
-        // 1. Update tile animations (block bonks & crumbling bridges)
-        val tileKeys = tiles.keys.toList()
-        for (key in tileKeys) {
-            val tile = tiles[key] ?: continue
-            var updated = tile
+        // 1. Update only tiles with active animations (block bonks & crumbling bridges)
+        for (tile in state.tiles.values) {
+            val needsBump = tile.bumpOffset != 0f || tile.bumpVelocity != 0f
+            val needsCrumble = tile.kind == TileKind.CRUMBLE_BRIDGE &&
+                (tile.crumbleTimer >= 0f || tile.respawnTimer >= 0f)
+            if (!needsBump && !needsCrumble) continue
 
-            if (tile.bumpOffset != 0f || tile.bumpVelocity != 0f) {
+            var updated = tile
+            if (needsBump) {
                 val newVel = tile.bumpVelocity - 22f * dt
-                var newOff = tile.bumpOffset + newVel * dt
-                if (newOff <= 0f) {
-                    updated = updated.copy(bumpOffset = 0f, bumpVelocity = 0f)
+                val newOff = tile.bumpOffset + newVel * dt
+                updated = if (newOff <= 0f) {
+                    updated.copy(bumpOffset = 0f, bumpVelocity = 0f)
                 } else {
-                    updated = updated.copy(bumpOffset = newOff, bumpVelocity = newVel)
+                    updated.copy(bumpOffset = newOff, bumpVelocity = newVel)
                 }
             }
 
-            if (tile.kind == TileKind.CRUMBLE_BRIDGE) {
+            if (needsCrumble) {
                 if (tile.crumbleTimer >= 0f) {
                     val remaining = tile.crumbleTimer - dt
                     if (remaining <= 0f) {
@@ -95,7 +101,7 @@ object PlatformerEngine {
             }
 
             if (updated !== tile) {
-                tiles[key] = updated
+                editTiles()[tileKey(tile.col, tile.row)] = updated
             }
         }
 
@@ -216,7 +222,7 @@ object PlatformerEngine {
         if (vx > 0f) {
             val rightCol = floor(px + halfW).toInt()
             for (r in minRowX..maxRowX) {
-                val tile = tiles[tileKey(rightCol, r)]
+                val tile = activeTiles()[tileKey(rightCol, r)]
                 if (tile != null && tile.isSolid) {
                     px = rightCol.toFloat() - halfW - 0.001f
                     vx = 0f
@@ -226,7 +232,7 @@ object PlatformerEngine {
         } else if (vx < 0f) {
             val leftCol = floor(px - halfW).toInt()
             for (r in minRowX..maxRowX) {
-                val tile = tiles[tileKey(leftCol, r)]
+                val tile = activeTiles()[tileKey(leftCol, r)]
                 if (tile != null && tile.isSolid) {
                     px = (leftCol + 1).toFloat() + halfW + 0.001f
                     vx = 0f
@@ -248,16 +254,17 @@ object PlatformerEngine {
             val footRow = floor(py).toInt()
             var landedTileY: Float? = null
             for (c in minColY..maxColY) {
-                val tile = tiles[tileKey(c, footRow)]
+                val tile = activeTiles()[tileKey(c, footRow)]
                 if (tile != null && tile.isSolid) {
                     val topY = (footRow + 1).toFloat()
                     if (prevY >= topY - 0.32f) {
                         landedTileY = max(landedTileY ?: topY, topY)
                         if (tile.kind == TileKind.ICE) onIce = true
                         if (tile.kind == TileKind.CRUMBLE_BRIDGE && tile.crumbleTimer < 0f) {
-                            tiles[tileKey(c, footRow)] = tile.copy(crumbleTimer = 0.55f)
+                            editTiles()[tileKey(c, footRow)] = tile.copy(crumbleTimer = 0.55f)
                         }
                         if (tile.kind == TileKind.SPRING) {
+                            editTiles()[tileKey(c, footRow)] = tile.copy(bumpOffset = -0.18f, bumpVelocity = 3.2f)
                             py = topY
                             vy = SPRING_VY
                             onGround = false
@@ -271,9 +278,17 @@ object PlatformerEngine {
                 }
             }
             if (landedTileY != null) {
-                if (!player.onGround && vy < -8f) {
-                    newSqX = 1.2f
-                    newSqY = 0.82f
+                if (!player.onGround && vy < -7.5f) {
+                    newSqX = 1.22f
+                    newSqY = 0.80f
+                    particles += spawnBurst(
+                        startId = nextId,
+                        kind = ParticleKind.DUST,
+                        x = px,
+                        y = landedTileY + 0.04f,
+                        count = 4,
+                        colorHex = 0xFFEFEBE9L
+                    ).also { nextId += it.size }
                 }
                 py = landedTileY
                 vy = 0f
@@ -301,14 +316,14 @@ object PlatformerEngine {
             var bonkedRowY: Float? = null
             for (c in minColY..maxColY) {
                 val key = tileKey(c, headRow)
-                val tile = tiles[key] ?: continue
+                val tile = activeTiles()[key] ?: continue
                 if (!tile.isSolid || tile.kind == TileKind.CRUMBLE_BRIDGE) continue
                 bonkedRowY = headRow.toFloat() - player.height - 0.001f
 
                 // Handle interactive blocks (? / M / S / Brick)
                 when (tile.kind) {
                     TileKind.QUESTION_COIN -> {
-                        tiles[key] = tile.copy(kind = TileKind.USED_BLOCK, bumpOffset = 0.08f, bumpVelocity = 2.6f)
+                        editTiles()[key] = tile.copy(kind = TileKind.USED_BLOCK, bumpOffset = 0.08f, bumpVelocity = 2.6f)
                         coinsCollected++
                         score += 100
                         events += PlatformerEvent.COIN
@@ -317,7 +332,7 @@ object PlatformerEngine {
                             .also { nextId += it.size }
                     }
                     TileKind.QUESTION_BERRY -> {
-                        tiles[key] = tile.copy(kind = TileKind.USED_BLOCK, bumpOffset = 0.08f, bumpVelocity = 2.6f)
+                        editTiles()[key] = tile.copy(kind = TileKind.USED_BLOCK, bumpOffset = 0.08f, bumpVelocity = 2.6f)
                         powerUps += PowerUpItem(
                             id = nextId++,
                             kind = PowerUpKind.BERRY,
@@ -329,7 +344,7 @@ object PlatformerEngine {
                         events += PlatformerEvent.BLOCK_BONK
                     }
                     TileKind.QUESTION_STAR -> {
-                        tiles[key] = tile.copy(kind = TileKind.USED_BLOCK, bumpOffset = 0.08f, bumpVelocity = 2.6f)
+                        editTiles()[key] = tile.copy(kind = TileKind.USED_BLOCK, bumpOffset = 0.08f, bumpVelocity = 2.6f)
                         powerUps += PowerUpItem(
                             id = nextId++,
                             kind = PowerUpKind.STAR,
@@ -342,13 +357,13 @@ object PlatformerEngine {
                     }
                     TileKind.BRICK -> {
                         if (player.maxHearts >= 3 || starTime > 0f) {
-                            tiles.remove(key)
+                            editTiles().remove(key)
                             score += 50
                             events += PlatformerEvent.BREAK_BRICK
                             particles += spawnBurst(nextId, ParticleKind.BRICK_SHARD, c + 0.5f, headRow + 0.5f, 8, 0xFFD97252L)
                                 .also { nextId += it.size }
                         } else {
-                            tiles[key] = tile.copy(bumpOffset = 0.08f, bumpVelocity = 2.4f)
+                            editTiles()[key] = tile.copy(bumpOffset = 0.08f, bumpVelocity = 2.4f)
                             events += PlatformerEvent.BLOCK_BONK
                         }
                     }
@@ -387,80 +402,96 @@ object PlatformerEngine {
             shellCombo = if (onGround) 0 else player.shellCombo
         )
 
-        // 8. Collect Coins
-        val updatedCoins = state.coins.map { coin ->
+        // 8. Collect Coins (only allocate list if a coin was collected)
+        var anyCoinHit = false
+        for (coin in state.coins) {
             if (!coin.collected &&
                 abs(coin.x - player.x) < (player.width * 0.55f + 0.35f) &&
                 abs(coin.y - (player.y + player.height * 0.5f)) < (player.height * 0.55f + 0.35f)
             ) {
-                coinsCollected++
-                score += 100
-                events += PlatformerEvent.COIN
-                popups += FloatingPopup(nextId++, "+100", coin.x, coin.y + 0.4f, colorHex = 0xFFFFD54FL)
-                particles += spawnBurst(nextId, ParticleKind.COIN_SPARKLE, coin.x, coin.y, 5, 0xFFFFD54FL)
-                    .also { nextId += it.size }
-                coin.copy(collected = true)
-            } else {
-                coin
+                anyCoinHit = true
+                break
+            }
+        }
+        val updatedCoins = if (!anyCoinHit) {
+            state.coins
+        } else {
+            state.coins.map { coin ->
+                if (!coin.collected &&
+                    abs(coin.x - player.x) < (player.width * 0.55f + 0.35f) &&
+                    abs(coin.y - (player.y + player.height * 0.5f)) < (player.height * 0.55f + 0.35f)
+                ) {
+                    coinsCollected++
+                    score += 100
+                    events += PlatformerEvent.COIN
+                    popups += FloatingPopup(nextId++, "+100", coin.x, coin.y + 0.4f, colorHex = 0xFFFFD54FL)
+                    particles += spawnBurst(nextId, ParticleKind.COIN_SPARKLE, coin.x, coin.y, 5, 0xFFFFD54FL)
+                        .also { nextId += it.size }
+                    coin.copy(collected = true)
+                } else {
+                    coin
+                }
             }
         }
 
         // 9. Update & Collect PowerUps
-        val survivingPowerUps = mutableListOf<PowerUpItem>()
-        for (item in powerUps) {
-            if (item.spawnRiseTimer > 0f) {
-                val risen = item.copy(
-                    y = item.y + dt * 1.4f,
-                    spawnRiseTimer = (item.spawnRiseTimer - dt).coerceAtLeast(0f)
-                )
-                survivingPowerUps += risen
-                continue
-            }
+        val survivingPowerUps = if (powerUps.isEmpty()) emptyList() else mutableListOf<PowerUpItem>()
+        if (survivingPowerUps is MutableList) {
+            for (item in powerUps) {
+                if (item.spawnRiseTimer > 0f) {
+                    val risen = item.copy(
+                        y = item.y + dt * 1.4f,
+                        spawnRiseTimer = (item.spawnRiseTimer - dt).coerceAtLeast(0f)
+                    )
+                    survivingPowerUps += risen
+                    continue
+                }
 
-            var ix = item.x + item.vx * dt
-            var iy = item.y
-            var ivx = item.vx
-            var ivy = (item.vy - GRAVITY * 0.85f * dt).coerceAtLeast(MAX_FALL_SPEED)
+                var ix = item.x + item.vx * dt
+                var iy = item.y
+                var ivx = item.vx
+                var ivy = (item.vy - GRAVITY * 0.85f * dt).coerceAtLeast(MAX_FALL_SPEED)
 
-            // Wall turn
-            val checkCol = floor(ix + if (ivx >= 0f) 0.35f else -0.35f).toInt()
-            val midRow = floor(iy + 0.35f).toInt()
-            val sideTile = tiles[tileKey(checkCol, midRow)]
-            if (sideTile != null && sideTile.isSolid) {
-                ivx = -ivx
-                ix = item.x
-            }
+                // Wall turn
+                val checkCol = floor(ix + if (ivx >= 0f) 0.35f else -0.35f).toInt()
+                val midRow = floor(iy + 0.35f).toInt()
+                val sideTile = activeTiles()[tileKey(checkCol, midRow)]
+                if (sideTile != null && sideTile.isSolid) {
+                    ivx = -ivx
+                    ix = item.x
+                }
 
-            // Floor check
-            iy += ivy * dt
-            val underRow = floor(iy).toInt()
-            val underCol = floor(ix).toInt()
-            val floorTile = tiles[tileKey(underCol, underRow)]
-            if (ivy <= 0f && floorTile != null && floorTile.isSolid && iy <= underRow + 1.05f) {
-                iy = (underRow + 1).toFloat()
-                ivy = if (item.kind == PowerUpKind.STAR) 9.6f else 0f
-            }
+                // Floor check
+                iy += ivy * dt
+                val underRow = floor(iy).toInt()
+                val underCol = floor(ix).toInt()
+                val floorTile = activeTiles()[tileKey(underCol, underRow)]
+                if (ivy <= 0f && floorTile != null && floorTile.isSolid && iy <= underRow + 1.05f) {
+                    iy = (underRow + 1).toFloat()
+                    ivy = if (item.kind == PowerUpKind.STAR) 9.6f else 0f
+                }
 
             if (iy < -2f) continue
 
             // Player pickup check
-            if (abs(ix - player.x) < (player.width * 0.55f + 0.4f) &&
-                abs((iy + 0.35f) - (player.y + player.height * 0.5f)) < (player.height * 0.55f + 0.4f)
-            ) {
-                events += PlatformerEvent.POWER_UP
-                if (item.kind == PowerUpKind.BERRY) {
-                    val newMax = max(player.maxHearts, 3)
-                    val newHearts = min(player.hearts + 1, newMax)
-                    player = player.copy(maxHearts = newMax, hearts = newHearts)
-                    score += 500
-                    popups += FloatingPopup(nextId++, "HEART +1", ix, iy + 0.7f, colorHex = 0xFFFF6E91L)
+                if (abs(ix - player.x) < (player.width * 0.55f + 0.4f) &&
+                    abs((iy + 0.35f) - (player.y + player.height * 0.5f)) < (player.height * 0.55f + 0.4f)
+                ) {
+                    events += PlatformerEvent.POWER_UP
+                    if (item.kind == PowerUpKind.BERRY) {
+                        val newMax = max(player.maxHearts, 3)
+                        val newHearts = min(player.hearts + 1, newMax)
+                        player = player.copy(maxHearts = newMax, hearts = newHearts)
+                        score += 500
+                        popups += FloatingPopup(nextId++, "HEART +1", ix, iy + 0.7f, colorHex = 0xFFFF6E91L)
+                    } else {
+                        player = player.copy(starTimer = 8.0f)
+                        score += 750
+                        popups += FloatingPopup(nextId++, "STAR POWER!", ix, iy + 0.7f, colorHex = 0xFFFFEB3BL)
+                    }
                 } else {
-                    player = player.copy(starTimer = 8.0f)
-                    score += 750
-                    popups += FloatingPopup(nextId++, "STAR POWER!", ix, iy + 0.7f, colorHex = 0xFFFFEB3BL)
+                    survivingPowerUps += item.copy(x = ix, y = iy, vx = ivx, vy = ivy)
                 }
-            } else {
-                survivingPowerUps += item.copy(x = ix, y = iy, vx = ivx, vy = ivy)
             }
         }
 
@@ -504,7 +535,7 @@ object PlatformerEngine {
                     val eHalf = enemy.width * 0.48f
                     val wallCol = floor(ex + if (evx >= 0f) eHalf else -eHalf).toInt()
                     val bodyRow = floor(ey + 0.35f).toInt()
-                    val wallTile = tiles[tileKey(wallCol, bodyRow)]
+                    val wallTile = activeTiles()[tileKey(wallCol, bodyRow)]
                     if (wallTile != null && wallTile.isSolid) {
                         evx = -evx
                         ex = enemy.x
@@ -514,7 +545,7 @@ object PlatformerEngine {
                     ey += evy * dt
                     val footRow = floor(ey).toInt()
                     val centerCol = floor(ex).toInt()
-                    val floorTile = tiles[tileKey(centerCol, footRow)]
+                    val floorTile = activeTiles()[tileKey(centerCol, footRow)]
                     if (evy <= 0f && floorTile != null && floorTile.isSolid && ey <= footRow + 1.08f) {
                         ey = (footRow + 1).toFloat()
                         evy = 0f
@@ -522,7 +553,7 @@ object PlatformerEngine {
                         // Active walkers turn around before walking off ledges (sliding shells don't!)
                         if (eState == EnemyState.ACTIVE && evx != 0f) {
                             val aheadCol = floor(ex + kotlin.math.sign(evx) * (eHalf + 0.12f)).toInt()
-                            val aheadTile = tiles[tileKey(aheadCol, footRow)]
+                            val aheadTile = activeTiles()[tileKey(aheadCol, footRow)]
                             if (aheadTile == null || !aheadTile.isSolid) {
                                 evx = -evx
                             }
@@ -657,7 +688,7 @@ object PlatformerEngine {
         if (!hurtTriggered && player.starTimer <= 0f) {
             val spikeRow = floor(player.y + 0.25f).toInt()
             for (c in minColY..maxColY) {
-                val tile = tiles[tileKey(c, spikeRow)]
+                val tile = activeTiles()[tileKey(c, spikeRow)]
                 if (tile != null && tile.kind == TileKind.SPIKES && player.y < spikeRow + 0.52f) {
                     hurtTriggered = true
                     break
@@ -781,7 +812,7 @@ object PlatformerEngine {
             flagGrabBonus = flagBonus,
             timeBonus = timeBonus,
             player = player,
-            tiles = tiles,
+            tiles = mutableTiles ?: state.tiles,
             movingPlatforms = platforms,
             coins = updatedCoins,
             powerUps = survivingPowerUps,

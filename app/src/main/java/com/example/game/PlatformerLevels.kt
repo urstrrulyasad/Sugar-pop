@@ -19,9 +19,11 @@ object PlatformerLevels {
         val loopCycle = (safeLevel - 1) / templates.size
         val template = templates[templateIdx]
 
-        // Master Mode scales speed and tightens time after beating the 10-stage campaign
-        val speedMultiplier = 1f + loopCycle * 0.18f
-        val timeLimit = (template.timeLimitSec - loopCycle * 10f).coerceAtLeast(80f)
+        val isHardLevel = safeLevel % 5 == 0
+
+        // Master Mode scales speed after stage 10; every 5th stage is a Hard Level
+        val speedMultiplier = (1f + loopCycle * 0.18f) * (if (isHardLevel) 1.24f else 1f)
+        val timeLimit = (template.timeLimitSec - loopCycle * 10f - (if (isHardLevel) 25f else 0f)).coerceAtLeast(70f)
         val worldLabel = if (loopCycle == 0) {
             template.worldLabel
         } else {
@@ -31,6 +33,11 @@ object PlatformerLevels {
             template.title
         } else {
             "${template.title} ★"
+        }
+        val subtitle = if (isHardLevel) {
+            "HARD LEVEL — Faster foes, tighter clock & 2 lives!"
+        } else {
+            template.subtitle
         }
 
         val rows = template.rows
@@ -142,12 +149,13 @@ object PlatformerLevels {
             levelNumber = safeLevel,
             worldLabel = worldLabel,
             title = title,
-            subtitle = template.subtitle,
+            subtitle = subtitle,
             theme = template.theme,
             widthTiles = widthTiles,
             heightTiles = heightTiles,
             timeLimitSec = timeLimit,
             speedMultiplier = speedMultiplier,
+            isHardLevel = isHardLevel,
             spawnX = spawnX,
             spawnY = spawnY,
             checkpoint = checkpoint,
@@ -172,6 +180,7 @@ object PlatformerLevels {
             timeLeftSec = spec.timeLimitSec,
             timeLimitSec = spec.timeLimitSec,
             speedMultiplier = spec.speedMultiplier,
+            isHardLevel = spec.isHardLevel,
             spawnX = spec.spawnX,
             spawnY = spec.spawnY,
             respawnX = spec.spawnX,
@@ -179,7 +188,8 @@ object PlatformerLevels {
             score = carriedScore,
             player = PlayerState(
                 x = spec.spawnX,
-                y = spec.spawnY
+                y = spec.spawnY,
+                lives = if (spec.isHardLevel) 2 else 3
             ),
             tiles = spec.initialTiles,
             movingPlatforms = spec.initialPlatforms,

@@ -29,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -84,8 +85,17 @@ fun VaultMediaTile(
     onLongClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val thumbFile = item.thumbnailPath?.let(::File)?.takeIf { it.exists() }
-        ?: File(item.vaultFilePath)
+    val thumbFile = remember(item.thumbnailPath, item.vaultFilePath) {
+        item.thumbnailPath?.let(::File)?.takeIf { it.exists() }
+            ?: File(item.vaultFilePath)
+    }
+    val imageRequest = remember(context, thumbFile) {
+        ImageRequest.Builder(context)
+            .data(thumbFile)
+            .size(420)
+            .crossfade(true)
+            .build()
+    }
 
     val borderColor = if (isSelected) {
         MaterialTheme.colorScheme.primary
@@ -110,10 +120,7 @@ fun VaultMediaTile(
             .testTag("media_tile_${item.id}")
     ) {
         AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(thumbFile)
-                .crossfade(true)
-                .build(),
+            model = imageRequest,
             contentDescription = item.title,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()

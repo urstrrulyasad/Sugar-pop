@@ -1,11 +1,16 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,11 +23,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -33,9 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
-import androidx.compose.material.icons.automirrored.rounded.HelpOutline
 import androidx.compose.material.icons.rounded.ArrowUpward
-import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Favorite
@@ -43,7 +43,6 @@ import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
-import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Timer
@@ -51,7 +50,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -61,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -68,8 +67,8 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -77,27 +76,61 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.example.game.GameStatus
 import com.example.game.PlatformerEngine
 import com.example.game.PlatformerEvent
 import com.example.game.PlatformerInput
 import com.example.game.PlatformerLevels
+import com.example.game.PlatformerWorldState
+import com.example.ui.components.PlatformerRenderScratch
 import com.example.ui.components.drawPlatformerWorld
-import kotlin.math.floor
-import kotlin.math.roundToInt
 
-private val ArcadeBg = Color(0xFF130B2B)
 private val ArcadeGold = Color(0xFFFFD54F)
 private val ArcadePink = Color(0xFFFF4F8B)
 private val ArcadeCyan = Color(0xFF40E0D0)
+
+private data class PlatformerHudSnapshot(
+    val worldLabel: String,
+    val title: String,
+    val isHardLevel: Boolean,
+    val status: GameStatus,
+    val hearts: Int,
+    val maxHearts: Int,
+    val lives: Int,
+    val score: Int,
+    val coins: Int,
+    val timeLeftInt: Int,
+    val starSeconds: Int,
+    val starsEarned: Int,
+    val flagBonus: Int,
+    val timeBonus: Int
+)
+
+private fun PlatformerWorldState.toHudSnapshot(): PlatformerHudSnapshot {
+    return PlatformerHudSnapshot(
+        worldLabel = worldLabel,
+        title = title,
+        isHardLevel = isHardLevel,
+        status = status,
+        hearts = player.hearts,
+        maxHearts = player.maxHearts,
+        lives = player.lives,
+        score = score,
+        coins = coinsCollected,
+        timeLeftInt = timeLeftSec.toInt(),
+        starSeconds = if (player.starTimer > 0f) player.starTimer.toInt() + 1 else 0,
+        starsEarned = starsEarned,
+        flagBonus = flagGrabBonus,
+        timeBonus = timeBonus
+    )
+}
+
+private class WorldHolder(var state: PlatformerWorldState)
 
 @Composable
 fun PlatformerGameContent(
@@ -109,11 +142,13 @@ fun PlatformerGameContent(
     modifier: Modifier = Modifier
 ) {
     val haptic = LocalHapticFeedback.current
-    val density = LocalDensity.current
 
     var currentLevel by remember(initialLevel) { mutableIntStateOf(initialLevel.coerceAtLeast(1)) }
     var maxUnlockedLevel by remember(initialLevel) { mutableIntStateOf(initialLevel.coerceAtLeast(1)) }
-    var worldState by remember { mutableStateOf(PlatformerLevels.createWorldState(currentLevel)) }
+    val worldHolder = remember { WorldHolder(PlatformerLevels.createWorldState(currentLevel)) }
+    var hud by remember { mutableStateOf(worldHolder.state.toHudSnapshot()) }
+    var renderTick by remember { mutableLongStateOf(0L) }
+    val renderScratch = remember { PlatformerRenderScratch() }
     var bestScore by remember(highScore) { mutableIntStateOf(highScore) }
 
     var showLevelPicker by remember { mutableStateOf(false) }
@@ -131,12 +166,21 @@ fun PlatformerGameContent(
 
     var prevJumpHeld by remember { mutableStateOf(false) }
 
+    fun setWorldStatus(newStatus: GameStatus) {
+        worldHolder.state = worldHolder.state.copy(status = newStatus)
+        hud = worldHolder.state.toHudSnapshot()
+        renderTick++
+    }
+
     fun loadLevel(level: Int, carriedScore: Int = 0) {
         currentLevel = level.coerceAtLeast(1)
         if (currentLevel > maxUnlockedLevel) {
             maxUnlockedLevel = currentLevel
         }
-        worldState = PlatformerLevels.createWorldState(currentLevel, carriedScore = carriedScore)
+        val fresh = PlatformerLevels.createWorldState(currentLevel, carriedScore = carriedScore)
+        worldHolder.state = fresh
+        hud = fresh.toHudSnapshot()
+        renderTick++
         prevJumpHeld = false
     }
 
@@ -144,75 +188,92 @@ fun PlatformerGameContent(
         if (restartSignal > 0) loadLevel(currentLevel)
     }
 
-    // Main 60fps Fixed-Step Simulation Loop
+    // Main 60Hz Fixed-Step Physics Simulation Loop (decoupled from HUD recomposition)
     val isActivelyPlaying =
-        worldState.status == GameStatus.PLAYING && !isExternalDialogOpen && !showLevelPicker
+        hud.status == GameStatus.PLAYING && !isExternalDialogOpen && !showLevelPicker
 
     LaunchedEffect(isActivelyPlaying, currentLevel) {
         if (!isActivelyPlaying) return@LaunchedEffect
         var lastFrameNs = 0L
+        var accumulator = 0f
+        val fixedStep = 1f / 60f
+
         while (true) {
             withFrameNanos { frameNs ->
                 if (lastFrameNs == 0L) {
                     lastFrameNs = frameNs
                     return@withFrameNanos
                 }
-                val dt = ((frameNs - lastFrameNs) / 1_000_000_000f).coerceIn(0.001f, 0.033f)
+                val rawDt = ((frameNs - lastFrameNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
                 lastFrameNs = frameNs
+                accumulator += rawDt
 
-                val left = touchLeft || keyLeft
-                val right = touchRight || keyRight
-                val jumpHeld = touchJump || keyJump
-                val jumpJustPressed = jumpHeld && !prevJumpHeld
-                prevJumpHeld = jumpHeld
-                val dash = touchDash || keyDash
+                var steps = 0
+                while (accumulator >= fixedStep && steps < 3) {
+                    val prevStatus = worldHolder.state.status
+                    val left = touchLeft || keyLeft
+                    val right = touchRight || keyRight
+                    val jumpHeld = touchJump || keyJump
+                    val jumpJustPressed = jumpHeld && !prevJumpHeld
+                    prevJumpHeld = jumpHeld
+                    val dash = touchDash || keyDash
 
-                val stepped = PlatformerEngine.step(
-                    state = worldState,
-                    input = PlatformerInput(
-                        left = left,
-                        right = right,
-                        jumpHeld = jumpHeld,
-                        jumpJustPressed = jumpJustPressed,
-                        dash = dash
-                    ),
-                    rawDt = dt
-                )
+                    val stepped = PlatformerEngine.step(
+                        state = worldHolder.state,
+                        input = PlatformerInput(
+                            left = left,
+                            right = right,
+                            jumpHeld = jumpHeld,
+                            jumpJustPressed = jumpJustPressed,
+                            dash = dash
+                        ),
+                        rawDt = fixedStep
+                    )
 
-                // Haptic feedback for key events
-                for (evt in stepped.lastEvents) {
-                    when (evt) {
-                        PlatformerEvent.STOMP,
-                        PlatformerEvent.KICK_SHELL,
-                        PlatformerEvent.SPRING,
-                        PlatformerEvent.HURT,
-                        PlatformerEvent.LEVEL_CLEAR ->
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        PlatformerEvent.COIN,
-                        PlatformerEvent.POWER_UP,
-                        PlatformerEvent.CHECKPOINT ->
-                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        else -> Unit
+                    for (evt in stepped.lastEvents) {
+                        when (evt) {
+                            PlatformerEvent.STOMP,
+                            PlatformerEvent.KICK_SHELL,
+                            PlatformerEvent.SPRING,
+                            PlatformerEvent.HURT,
+                            PlatformerEvent.LEVEL_CLEAR ->
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            PlatformerEvent.COIN,
+                            PlatformerEvent.POWER_UP,
+                            PlatformerEvent.CHECKPOINT ->
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            else -> Unit
+                        }
                     }
+
+                    if (stepped.score > bestScore) {
+                        bestScore = stepped.score
+                    }
+                    if (stepped.status == GameStatus.LEVEL_CLEAR && prevStatus != GameStatus.LEVEL_CLEAR) {
+                        val unlocked = (currentLevel + 1).coerceAtLeast(maxUnlockedLevel)
+                        maxUnlockedLevel = unlocked
+                        onSaveProgress(stepped.score, unlocked)
+                    } else if (stepped.status == GameStatus.GAME_OVER && prevStatus != GameStatus.GAME_OVER) {
+                        onSaveProgress(stepped.score, maxUnlockedLevel)
+                    }
+
+                    worldHolder.state = stepped
+                    accumulator -= fixedStep
+                    steps++
                 }
 
-                if (stepped.score > bestScore) {
-                    bestScore = stepped.score
+                // Only trigger HUD recomposition if a visible discrete HUD value actually changed
+                val nextHud = worldHolder.state.toHudSnapshot()
+                if (nextHud != hud) {
+                    hud = nextHud
                 }
-                if (stepped.status == GameStatus.LEVEL_CLEAR && worldState.status != GameStatus.LEVEL_CLEAR) {
-                    val unlocked = (currentLevel + 1).coerceAtLeast(maxUnlockedLevel)
-                    maxUnlockedLevel = unlocked
-                    onSaveProgress(stepped.score, unlocked)
-                } else if (stepped.status == GameStatus.GAME_OVER && worldState.status != GameStatus.GAME_OVER) {
-                    onSaveProgress(stepped.score, maxUnlockedLevel)
-                }
-
-                worldState = stepped
+                // Signal Canvas redraw without recomposing outer UI
+                renderTick++
             }
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .focusable()
@@ -221,28 +282,25 @@ fun PlatformerGameContent(
                 val released = event.type == KeyEventType.KeyUp
                 if (!pressed && !released) return@onPreviewKeyEvent false
                 when (event.key) {
-                    Key.DirectionLeft, Key.A -> {
-                        keyLeft = pressed; true
-                    }
-                    Key.DirectionRight, Key.D -> {
-                        keyRight = pressed; true
-                    }
-                    Key.DirectionUp, Key.W, Key.Spacebar -> {
-                        keyJump = pressed; true
-                    }
-                    Key.ShiftLeft, Key.ShiftRight, Key.X -> {
-                        keyDash = pressed; true
-                    }
+                    Key.DirectionLeft, Key.A -> { keyLeft = pressed; true }
+                    Key.DirectionRight, Key.D -> { keyRight = pressed; true }
+                    Key.DirectionUp, Key.W, Key.Spacebar -> { keyJump = pressed; true }
+                    Key.ShiftLeft, Key.ShiftRight, Key.X -> { keyDash = pressed; true }
                     else -> false
                 }
             }
     ) {
+        val isCompactHeight = maxHeight < 520.dp
+        val deckHeight = if (isCompactHeight) 68.dp else 90.dp
+        val dashSize = if (isCompactHeight) 58.dp else 72.dp
+        val jumpSize = if (isCompactHeight) 66.dp else 84.dp
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 920.dp)
                 .align(Alignment.Center),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 4.dp else 6.dp)
         ) {
             // Stage Select + Pause Bar
             Row(
@@ -253,19 +311,45 @@ fun PlatformerGameContent(
                 Surface(
                     onClick = { showLevelPicker = true },
                     shape = RoundedCornerShape(50),
-                    color = ArcadePink.copy(alpha = 0.25f),
+                    color = if (hud.isHardLevel) Color(0xFFD50000).copy(alpha = 0.35f) else ArcadePink.copy(alpha = 0.25f),
                     modifier = Modifier
-                        .border(1.dp, ArcadePink.copy(alpha = 0.6f), RoundedCornerShape(50))
+                        .weight(1f, fill = false)
+                        .border(
+                            width = if (hud.isHardLevel) 1.5.dp else 1.dp,
+                            color = if (hud.isHardLevel) Color(0xFFFF5252) else ArcadePink.copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(50)
+                        )
                         .testTag("game_level_picker_btn")
                 ) {
-                    Text(
-                        text = "${worldState.worldLabel} · ${worldState.title} ▾",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                    )
+                    ) {
+                        Text(
+                            text = "${hud.worldLabel} · ${hud.title} ▾",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (hud.isHardLevel) {
+                            Surface(
+                                color = Color(0xFFD50000),
+                                shape = RoundedCornerShape(50),
+                                modifier = Modifier.testTag("platformer_hard_badge")
+                            ) {
+                                Text(
+                                    text = "HARD",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Row(
@@ -280,8 +364,8 @@ fun PlatformerGameContent(
                     )
                     Surface(
                         onClick = {
-                            worldState = worldState.copy(
-                                status = if (worldState.status == GameStatus.PAUSED) GameStatus.PLAYING else GameStatus.PAUSED
+                            setWorldStatus(
+                                if (hud.status == GameStatus.PAUSED) GameStatus.PLAYING else GameStatus.PAUSED
                             )
                         },
                         shape = RoundedCornerShape(50),
@@ -293,7 +377,7 @@ fun PlatformerGameContent(
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
                             Icon(
-                                imageVector = if (worldState.status == GameStatus.PAUSED) {
+                                imageVector = if (hud.status == GameStatus.PAUSED) {
                                     Icons.Rounded.PlayArrow
                                 } else {
                                     Icons.Rounded.Pause
@@ -304,7 +388,7 @@ fun PlatformerGameContent(
                             )
                             Spacer(Modifier.width(4.dp))
                             Text(
-                                text = if (worldState.status == GameStatus.PAUSED) "Resume" else "Pause",
+                                text = if (hud.status == GameStatus.PAUSED) "Resume" else "Pause",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = Color.White
                             )
@@ -324,7 +408,7 @@ fun PlatformerGameContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                        .padding(horizontal = 12.dp, vertical = if (isCompactHeight) 4.dp else 7.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -332,8 +416,8 @@ fun PlatformerGameContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
-                        repeat(worldState.player.maxHearts) { idx ->
-                            val filled = idx < worldState.player.hearts
+                        repeat(hud.maxHearts) { idx ->
+                            val filled = idx < hud.hearts
                             Icon(
                                 imageVector = if (filled) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                 contentDescription = "Heart",
@@ -343,7 +427,7 @@ fun PlatformerGameContent(
                         }
                         Spacer(Modifier.width(4.dp))
                         Text(
-                            text = "×${worldState.player.lives}",
+                            text = "×${hud.lives}",
                             style = MaterialTheme.typography.labelLarge,
                             color = Color.White,
                             fontWeight = FontWeight.Bold
@@ -351,14 +435,14 @@ fun PlatformerGameContent(
                     }
 
                     Text(
-                        text = "SCORE ${worldState.score}",
+                        text = "SCORE ${hud.score}",
                         style = MaterialTheme.typography.labelLarge,
                         color = ArcadeGold,
                         fontWeight = FontWeight.Bold
                     )
 
                     Text(
-                        text = "COINS ${worldState.coinsCollected}",
+                        text = "COINS ${hud.coins}",
                         style = MaterialTheme.typography.labelLarge,
                         color = ArcadeCyan,
                         fontWeight = FontWeight.Bold
@@ -371,21 +455,21 @@ fun PlatformerGameContent(
                         Icon(
                             imageVector = Icons.Rounded.Timer,
                             contentDescription = "Time Left",
-                            tint = if (worldState.timeLeftSec < 25f) Color(0xFFFF5252) else Color.White.copy(alpha = 0.8f),
+                            tint = if (hud.timeLeftInt < 25) Color(0xFFFF5252) else Color.White.copy(alpha = 0.8f),
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "${worldState.timeLeftSec.toInt()}s",
+                            text = "${hud.timeLeftInt}s",
                             style = MaterialTheme.typography.labelLarge,
-                            color = if (worldState.timeLeftSec < 25f) Color(0xFFFF5252) else Color.White,
+                            color = if (hud.timeLeftInt < 25) Color(0xFFFF5252) else Color.White,
                             fontWeight = FontWeight.Bold
                         )
                     }
                 }
             }
 
-            // 2.5D Platformer Viewport
-            BoxWithConstraints(
+            // 2.5D Platformer Viewport (Canvas reads renderTick directly for 0 recomposition overhead)
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
@@ -393,43 +477,27 @@ fun PlatformerGameContent(
                     .border(2.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(20.dp))
                     .testTag("platformer_world_canvas")
             ) {
-                val widthPx = with(density) { maxWidth.toPx() }
-                val heightPx = with(density) { maxHeight.toPx() }
-                val tilePx = (heightPx / 12.2f).coerceAtLeast(18f)
-                val floorBaseline = heightPx - tilePx * 0.2f
-
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    drawPlatformerWorld(worldState)
-                }
-
-                // Floating Score / PowerUp Popups
-                for (pop in worldState.popups) {
-                    val px = (pop.x - worldState.cameraX) * tilePx
-                    val py = floorBaseline - pop.y * tilePx
-                    if (px in 0f..widthPx && py in 0f..heightPx) {
-                        Text(
-                            text = pop.text,
-                            color = Color(pop.colorHex),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.offset {
-                                IntOffset((px - 28f).roundToInt(), (py - 18f).roundToInt())
-                            }
-                        )
-                    }
+                    val frame = renderTick
+                    drawPlatformerWorld(worldHolder.state, renderScratch)
+                    if (frame < 0L) Unit
                 }
 
                 // Active Star Power Badge
-                if (worldState.player.starTimer > 0f) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hud.starSeconds > 0,
+                    enter = scaleIn() + fadeIn(),
+                    exit = fadeOut(),
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 8.dp)
+                ) {
                     Surface(
                         color = ArcadeGold,
-                        shape = RoundedCornerShape(50),
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 8.dp)
+                        shape = RoundedCornerShape(50)
                     ) {
                         Text(
-                            text = "★ STAR TURBO ${worldState.player.starTimer.toInt() + 1}s",
+                            text = "★ STAR TURBO ${hud.starSeconds}s",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color(0xFF2B1200),
                             fontWeight = FontWeight.ExtraBold,
@@ -439,7 +507,11 @@ fun PlatformerGameContent(
                 }
 
                 // Pause Overlay
-                if (worldState.status == GameStatus.PAUSED) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hud.status == GameStatus.PAUSED,
+                    enter = fadeIn(tween(180)) + scaleIn(spring(0.75f, Spring.StiffnessMedium), initialScale = 0.9f),
+                    exit = fadeOut(tween(140))
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -465,12 +537,12 @@ fun PlatformerGameContent(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "${worldState.worldLabel} · ${worldState.title}",
+                                    text = "${hud.worldLabel} · ${hud.title}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = 0.8f)
                                 )
                                 Button(
-                                    onClick = { worldState = worldState.copy(status = GameStatus.PLAYING) },
+                                    onClick = { setWorldStatus(GameStatus.PLAYING) },
                                     colors = ButtonDefaults.buttonColors(containerColor = ArcadePink),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
@@ -488,7 +560,11 @@ fun PlatformerGameContent(
                 }
 
                 // Level Clear Overlay
-                if (worldState.status == GameStatus.LEVEL_CLEAR) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hud.status == GameStatus.LEVEL_CLEAR,
+                    enter = fadeIn(tween(220)) + scaleIn(spring(0.68f, Spring.StiffnessMediumLow), initialScale = 0.85f),
+                    exit = fadeOut(tween(140))
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -515,14 +591,18 @@ fun PlatformerGameContent(
                                     modifier = Modifier.size(40.dp)
                                 )
                                 Text(
-                                    text = "Stage ${worldState.worldLabel} Clear!",
+                                    text = if (hud.isHardLevel) {
+                                        "HARD STAGE ${hud.worldLabel} CLEAR!"
+                                    } else {
+                                        "Stage ${hud.worldLabel} Clear!"
+                                    },
                                     style = MaterialTheme.typography.headlineSmall,
                                     color = Color.White,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     repeat(3) { idx ->
-                                        val lit = idx < worldState.starsEarned
+                                        val lit = idx < hud.starsEarned
                                         Icon(
                                             imageVector = if (lit) Icons.Rounded.Star else Icons.Rounded.StarBorder,
                                             contentDescription = null,
@@ -532,18 +612,18 @@ fun PlatformerGameContent(
                                     }
                                 }
                                 Text(
-                                    text = "Flag Bonus: +${worldState.flagGrabBonus}  ·  Time: +${worldState.timeBonus}",
+                                    text = "Flag Bonus: +${hud.flagBonus}  ·  Time: +${hud.timeBonus}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ArcadeCyan
                                 )
                                 Text(
-                                    text = "Total Score: ${worldState.score}  (Best: $bestScore)",
+                                    text = "Total Score: ${hud.score}  (Best: $bestScore)",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = ArcadeGold,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Button(
-                                    onClick = { loadLevel(currentLevel + 1, carriedScore = worldState.score) },
+                                    onClick = { loadLevel(currentLevel + 1, carriedScore = hud.score) },
                                     colors = ButtonDefaults.buttonColors(containerColor = ArcadePink),
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -563,7 +643,11 @@ fun PlatformerGameContent(
                 }
 
                 // Game Over Overlay
-                if (worldState.status == GameStatus.GAME_OVER) {
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = hud.status == GameStatus.GAME_OVER,
+                    enter = fadeIn(tween(220)) + scaleIn(spring(0.7f, Spring.StiffnessMediumLow), initialScale = 0.88f),
+                    exit = fadeOut(tween(140))
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -590,7 +674,7 @@ fun PlatformerGameContent(
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
-                                    text = "Reached ${worldState.worldLabel} · Score ${worldState.score}",
+                                    text = "Reached ${hud.worldLabel} · Score ${hud.score}",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = Color.White.copy(alpha = 0.85f)
                                 )
@@ -607,18 +691,17 @@ fun PlatformerGameContent(
                 }
             }
 
-            // Dedicated Multi-Touch Arcade Controller Deck
+            // Adaptive Multi-Touch Arcade Controller Deck
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(92.dp),
+                    .height(deckHeight),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Multi-touch Left / Right D-Pad (supports seamless thumb slide between Left & Right)
                 Row(
                     modifier = Modifier
-                        .width(176.dp)
+                        .width(if (isCompactHeight) 152.dp else 176.dp)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(20.dp))
                         .background(Color.White.copy(alpha = 0.08f))
@@ -648,7 +731,7 @@ fun PlatformerGameContent(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Move Left",
                             tint = if (touchLeft || keyLeft) ArcadeCyan else Color.White,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(if (isCompactHeight) 28.dp else 34.dp)
                         )
                     }
                     Box(
@@ -668,20 +751,23 @@ fun PlatformerGameContent(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
                             contentDescription = "Move Right",
                             tint = if (touchRight || keyRight) ArcadeCyan else Color.White,
-                            modifier = Modifier.size(34.dp)
+                            modifier = Modifier.size(if (isCompactHeight) 28.dp else 34.dp)
                         )
                     }
                 }
 
-                // Right Action Cluster: Hold DASH + Tap/Hold JUMP
+                // Right Action Cluster: Hold DASH + Tap/Hold JUMP with bouncy press feedback
+                val dashScale by animateFloatAsState(if (touchDash || keyDash) 0.91f else 1f, spring(stiffness = Spring.StiffnessHigh), label = "dashScale")
+                val jumpScale by animateFloatAsState(if (touchJump || keyJump) 0.90f else 1f, spring(stiffness = Spring.StiffnessHigh), label = "jumpScale")
+
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // DASH Button
                     Box(
                         modifier = Modifier
-                            .size(72.dp)
+                            .size(dashSize)
+                            .graphicsLayer { scaleX = dashScale; scaleY = dashScale }
                             .clip(CircleShape)
                             .background(
                                 if (touchDash || keyDash) ArcadeGold else Color.White.copy(alpha = 0.12f)
@@ -703,7 +789,7 @@ fun PlatformerGameContent(
                                 imageVector = Icons.Rounded.Bolt,
                                 contentDescription = "Dash",
                                 tint = if (touchDash || keyDash) Color(0xFF28114E) else ArcadeGold,
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(if (isCompactHeight) 22.dp else 26.dp)
                             )
                             Text(
                                 text = "DASH",
@@ -714,10 +800,10 @@ fun PlatformerGameContent(
                         }
                     }
 
-                    // JUMP Button
                     Box(
                         modifier = Modifier
-                            .size(84.dp)
+                            .size(jumpSize)
+                            .graphicsLayer { scaleX = jumpScale; scaleY = jumpScale }
                             .clip(CircleShape)
                             .background(
                                 if (touchJump || keyJump) ArcadePink else ArcadePink.copy(alpha = 0.28f)
@@ -739,7 +825,7 @@ fun PlatformerGameContent(
                                 imageVector = Icons.Rounded.ArrowUpward,
                                 contentDescription = "Jump",
                                 tint = Color.White,
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(if (isCompactHeight) 24.dp else 30.dp)
                             )
                             Text(
                                 text = "JUMP",
@@ -800,12 +886,31 @@ fun PlatformerGameContent(
                                         style = MaterialTheme.typography.labelLarge,
                                         fontWeight = FontWeight.Bold
                                     )
-                                    if (!unlocked) {
-                                        Icon(
-                                            Icons.Rounded.Lock,
-                                            contentDescription = "Locked",
-                                            modifier = Modifier.size(14.dp)
-                                        )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        if (spec.isHardLevel) {
+                                            Surface(
+                                                color = Color(0xFFD50000),
+                                                shape = RoundedCornerShape(50)
+                                            ) {
+                                                Text(
+                                                    text = "HARD",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = Color.White,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                )
+                                            }
+                                        }
+                                        if (!unlocked) {
+                                            Icon(
+                                                Icons.Rounded.Lock,
+                                                contentDescription = "Locked",
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
                                     }
                                 }
                                 Text(

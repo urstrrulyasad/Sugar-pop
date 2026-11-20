@@ -301,6 +301,14 @@ private fun ZoomablePhotoPage(
         }
     }
 
+    val imageRequest = remember(context, photo.vaultFilePath) {
+        ImageRequest.Builder(context)
+            .data(File(photo.vaultFilePath))
+            .size(2048)
+            .crossfade(true)
+            .build()
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -330,10 +338,7 @@ private fun ZoomablePhotoPage(
         contentAlignment = Alignment.Center
     ) {
         AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(File(photo.vaultFilePath))
-                .crossfade(true)
-                .build(),
+            model = imageRequest,
             contentDescription = photo.title,
             contentScale = ContentScale.Fit,
             modifier = Modifier

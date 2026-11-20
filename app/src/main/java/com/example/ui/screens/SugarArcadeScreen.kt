@@ -1,7 +1,17 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -229,9 +240,13 @@ fun SugarArcadeScreen(
             }
 
             // Active Game Canvas
-            Crossfade(
+            AnimatedContent(
                 targetState = activeMode,
                 modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    (fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = spring(dampingRatio = 0.78f, stiffness = Spring.StiffnessMediumLow)))
+                        .togetherWith(fadeOut(tween(160)) + scaleOut(targetScale = 0.98f))
+                },
                 label = "arcadeGameModeSwitch"
             ) { mode ->
                 when (mode) {
@@ -302,26 +317,40 @@ private fun ArcadeModeChip(
     tag: String,
     onClick: () -> Unit
 ) {
+    val bgColor by animateColorAsState(
+        targetValue = if (selected) ArcadeAccentPink else Color.Transparent,
+        animationSpec = tween(180),
+        label = "modeChipBg"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (selected) 1.03f else 0.96f,
+        animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessMedium),
+        label = "modeChipScale"
+    )
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clip(RoundedCornerShape(50))
-            .background(if (selected) ArcadeAccentPink else Color.Transparent)
+            .background(bgColor)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
             .testTag(tag)
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White,
+            tint = Color.White.copy(alpha = if (selected) 1f else 0.78f),
             modifier = Modifier.size(15.dp)
         )
         Spacer(Modifier.width(4.dp))
         Text(
             text = label,
             style = MaterialTheme.typography.labelMedium,
-            color = Color.White,
+            color = Color.White.copy(alpha = if (selected) 1f else 0.8f),
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
         )
     }
